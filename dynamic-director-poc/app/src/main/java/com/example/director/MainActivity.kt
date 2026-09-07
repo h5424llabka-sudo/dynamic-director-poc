@@ -88,6 +88,7 @@ fun CameraScreen(hasPermission: Boolean) {
         
         var currentScore by remember { mutableStateOf(0f) }
         var detectionStatus by remember { mutableStateOf("Waiting for Detection...") }
+        var currentDetection by remember { mutableStateOf<DetectionResult?>(null) }
         
         // Initialize AI models and configs once
         val yoloDetector = remember { YoloDetector(context) }
@@ -116,12 +117,14 @@ fun CameraScreen(hasPermission: Boolean) {
                                 
                                 // 1. TFLite Detection
                                 val detection = yoloDetector.detect(bitmap)
+                                currentDetection = detection
                                 
                                 if (detection != null && config != null) {
                                     // 2. OpenCV Scoring
                                     val score = ScoringEngine.calculateScore(bitmap, detection, config)
                                     currentScore = score
-                                    detectionStatus = "Person Detected (Conf: ${(detection.confidence*100).toInt()}%)"
+                                    val prefix = if (yoloDetector.isMockMode) "[MOCK] " else ""
+                                    detectionStatus = "${prefix}Person Detected (Conf: ${(detection.confidence*100).toInt()}%)"
                                 } else {
                                     currentScore = 0f
                                     detectionStatus = "Searching..."
@@ -154,7 +157,7 @@ fun CameraScreen(hasPermission: Boolean) {
             )
             
             // Developer Dashboard Overlay
-            val appVersion = "v0.1.0"
+            val appVersion = "v0.1.2"
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -166,6 +169,25 @@ fun CameraScreen(hasPermission: Boolean) {
                     color = if (currentScore > 85f) Color.Yellow else Color.Green,
                     style = MaterialTheme.typography.bodyLarge
                 )
+            }
+            
+            // Draw BBox Overlay
+            currentDetection?.let { det ->
+                androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                    val w = size.width
+                    val h = size.height
+                    val left = det.x1 * w
+                    val top = det.y1 * h
+                    val right = det.x2 * w
+                    val bottom = det.y2 * h
+                    
+                    drawRect(
+                        color = Color.Red,
+                        topLeft = androidx.compose.ui.geometry.Offset(left, top),
+                        size = androidx.compose.ui.geometry.Size(right - left, bottom - top),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 5f)
+                    )
+                }
             }
         }
     } else {

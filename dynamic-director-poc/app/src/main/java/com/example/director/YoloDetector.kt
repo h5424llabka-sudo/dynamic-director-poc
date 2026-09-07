@@ -35,8 +35,30 @@ class YoloDetector(context: Context, modelName: String = "yolov8n_float16.tflite
         }
     }
 
+    val isMockMode: Boolean
+        get() = interpreter == null
+
+    private var mockOffset = 0f
+
     fun detect(bitmap: Bitmap): DetectionResult? {
-        val tflite = interpreter ?: return null
+        val tflite = interpreter
+        if (tflite == null) {
+            // Mock Mode: return a moving fake BBox in the center of the screen
+            mockOffset += 0.01f
+            if (mockOffset > 0.1f) mockOffset = -0.1f
+            val cx = 0.5f + mockOffset
+            val cy = 0.5f
+            val w = 0.3f
+            val h = 0.5f
+            return DetectionResult(
+                x1 = cx - w/2,
+                y1 = cy - h/2,
+                x2 = cx + w/2,
+                y2 = cy + h/2,
+                confidence = 0.99f,
+                classId = 0
+            )
+        }
 
         // Prepare input image
         val imageProcessor = ImageProcessor.Builder()
