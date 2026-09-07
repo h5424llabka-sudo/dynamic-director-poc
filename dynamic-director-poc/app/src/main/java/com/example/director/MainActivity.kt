@@ -154,6 +154,7 @@ fun CameraScreen(hasPermission: Boolean) {
             )
             
             // Developer Dashboard Overlay
+            val appVersion = "v0.1.0"
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -161,7 +162,7 @@ fun CameraScreen(hasPermission: Boolean) {
                 contentAlignment = Alignment.TopStart
             ) {
                 Text(
-                    text = "Score: ${currentScore.toInt()}%\n$detectionStatus",
+                    text = "Dynamic Director $appVersion\nScore: ${currentScore.toInt()}%\n$detectionStatus",
                     color = if (currentScore > 85f) Color.Yellow else Color.Green,
                     style = MaterialTheme.typography.bodyLarge
                 )
