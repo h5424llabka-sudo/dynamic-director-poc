@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,6 +32,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import org.opencv.android.OpenCVLoader
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
@@ -40,7 +42,6 @@ class MainActivity : ComponentActivity() {
     ) { isGranted ->
         if (isGranted) {
             Log.d("DynamicDirector", "Camera permission granted")
-            // Recreate activity to update UI (simplest approach for PoC)
             recreate()
         } else {
             Log.e("DynamicDirector", "Camera permission denied")
@@ -50,6 +51,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        // Initialize OpenCV
+        if (OpenCVLoader.initDebug()) {
+            Log.d("DynamicDirector", "OpenCV loaded successfully")
+        } else {
+            Log.e("DynamicDirector", "OpenCV initialization failed")
+        }
+
         val hasPermission = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.CAMERA
@@ -77,6 +85,13 @@ fun CameraScreen(hasPermission: Boolean) {
     if (hasPermission) {
         val context = LocalContext.current
         val lifecycleOwner = LocalLifecycleOwner.current
+        
+        var currentScore by remember { mutableStateOf(0f) }
+        var detectionStatus by remember { mutableStateOf("Waiting for Detection...") }
+        
+        // Initialize AI models and configs once
+        val yoloDetector = remember { YoloDetector(context) }
+        val config = remember { ConfigManager.loadConfig(context) }
 
         Box(modifier = Modifier.fillMaxSize()) {
             AndroidView(
@@ -96,11 +111,26 @@ fun CameraScreen(hasPermission: Boolean) {
                             .build()
                             
                         imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
-                            // TODO: Phase 4 - Implement inference and scoring logic here
-                            // Convert ImageProxy to format for TFLite and OpenCV
-                            
-                            // Always close the imageProxy when done
-                            imageProxy.close()
+                            try {
+                                val bitmap = imageProxy.toBitmap()
+                                
+                                // 1. TFLite Detection
+                                val detection = yoloDetector.detect(bitmap)
+                                
+                                if (detection != null && config != null) {
+                                    // 2. OpenCV Scoring
+                                    val score = ScoringEngine.calculateScore(bitmap, detection, config)
+                                    currentScore = score
+                                    detectionStatus = "Person Detected (Conf: ${(detection.confidence*100).toInt()}%)"
+                                } else {
+                                    currentScore = 0f
+                                    detectionStatus = "Searching..."
+                                }
+                            } catch (e: Exception) {
+                                Log.e("DynamicDirector", "Analysis failed", e)
+                            } finally {
+                                imageProxy.close()
+                            }
                         }
                         
                         val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
@@ -131,8 +161,8 @@ fun CameraScreen(hasPermission: Boolean) {
                 contentAlignment = Alignment.TopStart
             ) {
                 Text(
-                    text = "Score: --%\nWaiting for Detection...",
-                    color = Color.Green,
+                    text = "Score: ${currentScore.toInt()}%\n$detectionStatus",
+                    color = if (currentScore > 85f) Color.Yellow else Color.Green,
                     style = MaterialTheme.typography.bodyLarge
                 )
             }
