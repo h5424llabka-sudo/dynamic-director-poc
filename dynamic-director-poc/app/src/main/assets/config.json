@@ -1,0 +1,16 @@
+{
+  "target_composition": {
+    "subject_center_x": 0.66,
+    "subject_center_y": 0.50,
+    "subject_area_ratio": 0.25
+  },
+  "target_lighting": {
+    "is_backlit": true,
+    "subject_brightness_target": 120,
+    "background_brightness_target": 200
+  },
+  "tolerance": {
+    "position_margin": 0.1,
+    "area_margin": 0.05
+  }
+}
