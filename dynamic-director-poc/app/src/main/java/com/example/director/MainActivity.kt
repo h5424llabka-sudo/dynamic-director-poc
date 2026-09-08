@@ -125,7 +125,14 @@ fun CameraScreen(hasPermission: Boolean) {
 
                         imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
                             try {
-                                val bitmap = imageProxy.toBitmap()
+                                val rawBitmap = imageProxy.toBitmap()
+                                
+                                // Rotate bitmap to be upright (Object Detection fails if image is sideways)
+                                val matrix = android.graphics.Matrix()
+                                matrix.postRotate(imageProxy.imageInfo.rotationDegrees.toFloat())
+                                val bitmap = android.graphics.Bitmap.createBitmap(
+                                    rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true
+                                )
                                 
                                 // 1. TFLite Detection
                                 val detection = yoloDetector.detect(bitmap)
