@@ -64,6 +64,9 @@ dependencies {
     // TensorFlow Lite
     implementation("org.tensorflow:tensorflow-lite-task-vision:0.4.4")
 
+    // ML Kit Face Detection
+    implementation("com.google.mlkit:face-detection:16.1.6")
+
     // OpenCV
     implementation("com.quickbirdstudios:opencv:4.5.3.0")
 }

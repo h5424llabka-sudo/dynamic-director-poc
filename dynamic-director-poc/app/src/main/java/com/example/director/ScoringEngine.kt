@@ -86,4 +86,20 @@ object ScoringEngine {
         // Combine scores (70% composition, 30% lighting)
         return (compScore * 0.7f) + (lightScore * 0.3f)
     }
+
+    fun calculateFaceScore(face: FaceResult): Float {
+        // Ideal: Smiling probability near 1.0 (100%), looking straight (Euler Y and Z near 0)
+        val smileScore = face.smilingProbability * 100f
+        
+        // Gaze score (Penalty for turning head)
+        // EulerY: left/right (ideal is 0)
+        // EulerZ: tilt (ideal is 0)
+        val gazePenalty = abs(face.headEulerAngleY) + abs(face.headEulerAngleZ)
+        
+        // If they look away by more than 30 degrees combined, penalty is huge
+        val gazeScore = max(0f, 100f - (gazePenalty * 2f))
+        
+        // Emotion is primarily smile + gaze
+        return (smileScore * 0.7f) + (gazeScore * 0.3f)
+    }
 }

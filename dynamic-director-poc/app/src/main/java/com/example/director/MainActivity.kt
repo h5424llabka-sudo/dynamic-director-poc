@@ -89,11 +89,11 @@ fun CameraScreen(hasPermission: Boolean) {
         val lifecycleOwner = LocalLifecycleOwner.current
         
         var currentScore by remember { mutableStateOf(0f) }
-        var detectionStatus by remember { mutableStateOf("Waiting for Detection...") }
-        var currentDetection by remember { mutableStateOf<DetectionResult?>(null) }
+        var detectionStatus by remember { mutableStateOf("Waiting for Face...") }
+        var currentFace by remember { mutableStateOf<FaceResult?>(null) }
         
-        // Initialize AI models and configs once
-        val yoloDetector = remember { YoloDetector(context) }
+        // Initialize AI models
+        val faceAnalyzer = remember { FaceAnalyzer() }
         val config = remember { ConfigManager.loadConfig(context) }
 
         Box(modifier = Modifier.fillMaxSize()) {
@@ -134,62 +134,66 @@ fun CameraScreen(hasPermission: Boolean) {
                                     rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true
                                 )
                                 
-                                // 1. TFLite Detection
-                                val detection = yoloDetector.detect(bitmap)
-                                currentDetection = detection
-                                
-                                if (detection != null && config != null) {
-                                    // 2. OpenCV Scoring
-                                    val score = ScoringEngine.calculateScore(bitmap, detection, config)
-                                    currentScore = score
+                                // ML Kit Face Detection (Asynchronous)
+                                faceAnalyzer.analyze(bitmap, { faceResult ->
+                                    currentFace = faceResult
                                     
-                                    // Phase 5: Auto Shutter Logic
-                                    val now = System.currentTimeMillis()
-                                    if (isTakingPhoto) {
-                                        detectionStatus = "📸 Taking Photo..."
-                                    } else if (now - lastCaptureTime < cooldownMs) {
-                                        detectionStatus = "❄️ Cooldown..."
-                                        consecutiveHighScores = 0
-                                    } else {
-                                        val prefix = if (yoloDetector.isMockMode) "[MOCK] " else ""
-                                        detectionStatus = "${prefix}Person Detected (Conf: ${(detection.confidence*100).toInt()}%)"
+                                    if (faceResult != null) {
+                                        val score = ScoringEngine.calculateFaceScore(faceResult)
+                                        currentScore = score
                                         
-                                        if (score >= 85f) {
-                                            consecutiveHighScores++
-                                            if (consecutiveHighScores >= 3) {
-                                                isTakingPhoto = true
-                                                lastCaptureTime = now
-                                                consecutiveHighScores = 0
-                                                
-                                                val file = java.io.File(ctx.filesDir, "director_capture_${now}.jpg")
-                                                val outputOptions = ImageCapture.OutputFileOptions.Builder(file).build()
-                                                
-                                                imageCapture.takePicture(
-                                                    outputOptions,
-                                                    ContextCompat.getMainExecutor(ctx),
-                                                    object : ImageCapture.OnImageSavedCallback {
-                                                        override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                                                            isTakingPhoto = false
-                                                            Log.d("DynamicDirector", "Photo saved to ${file.absolutePath}")
-                                                        }
-                                                        override fun onError(exc: ImageCaptureException) {
-                                                            isTakingPhoto = false
-                                                            Log.e("DynamicDirector", "Capture failed", exc)
-                                                        }
-                                                    }
-                                                )
-                                            }
-                                        } else {
+                                        // Phase 6: Emotional Auto Shutter Logic
+                                        val now = System.currentTimeMillis()
+                                        if (isTakingPhoto) {
+                                            detectionStatus = "📸 Taking Photo..."
+                                        } else if (now - lastCaptureTime < cooldownMs) {
+                                            detectionStatus = "❄️ Cooldown..."
                                             consecutiveHighScores = 0
+                                        } else {
+                                            val smilePct = (faceResult.smilingProbability * 100).toInt()
+                                            detectionStatus = "Face Detected (Smile: $smilePct%)"
+                                            
+                                            // Shutter threshold for smile and gaze
+                                            if (score >= 80f) {
+                                                consecutiveHighScores++
+                                                if (consecutiveHighScores >= 3) {
+                                                    isTakingPhoto = true
+                                                    lastCaptureTime = now
+                                                    consecutiveHighScores = 0
+                                                    
+                                                    val file = java.io.File(ctx.filesDir, "director_capture_${now}.jpg")
+                                                    val outputOptions = ImageCapture.OutputFileOptions.Builder(file).build()
+                                                    
+                                                    imageCapture.takePicture(
+                                                        outputOptions,
+                                                        ContextCompat.getMainExecutor(ctx),
+                                                        object : ImageCapture.OnImageSavedCallback {
+                                                            override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                                                                isTakingPhoto = false
+                                                                Log.d("DynamicDirector", "Photo saved to ${file.absolutePath}")
+                                                            }
+                                                            override fun onError(exc: ImageCaptureException) {
+                                                                isTakingPhoto = false
+                                                                Log.e("DynamicDirector", "Capture failed", exc)
+                                                            }
+                                                        }
+                                                    )
+                                                }
+                                            } else {
+                                                consecutiveHighScores = 0
+                                            }
                                         }
+                                    } else {
+                                        currentScore = 0f
+                                        detectionStatus = "Searching for faces..."
+                                        consecutiveHighScores = 0
                                     }
-                                } else {
-                                    currentScore = 0f
-                                    detectionStatus = "Searching..."
-                                }
+                                }, {
+                                    // Complete listener to close imageProxy
+                                    imageProxy.close()
+                                })
                             } catch (e: Exception) {
                                 Log.e("DynamicDirector", "Analysis failed", e)
-                            } finally {
                                 imageProxy.close()
                             }
                         }
@@ -231,17 +235,17 @@ fun CameraScreen(hasPermission: Boolean) {
             }
             
             // Draw BBox Overlay
-            currentDetection?.let { det ->
+            currentFace?.let { face ->
                 androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
                     val w = size.width
                     val h = size.height
-                    val left = det.x1 * w
-                    val top = det.y1 * h
-                    val right = det.x2 * w
-                    val bottom = det.y2 * h
+                    val left = face.x1 * w
+                    val top = face.y1 * h
+                    val right = face.x2 * w
+                    val bottom = face.y2 * h
                     
                     drawRect(
-                        color = Color.Red,
+                        color = Color.Green,
                         topLeft = androidx.compose.ui.geometry.Offset(left, top),
                         size = androidx.compose.ui.geometry.Size(right - left, bottom - top),
                         style = androidx.compose.ui.graphics.drawscope.Stroke(width = 5f)
