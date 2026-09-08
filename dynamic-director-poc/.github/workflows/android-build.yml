@@ -20,20 +20,10 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-
-    - name: Install Ultralytics
-      run: pip install ultralytics
-
-    - name: Generate YOLOv8 TFLite Model
+    - name: Download EfficientDet Model
       run: |
-        python scripts/export_model.py
         mkdir -p app/src/main/assets
-        # Ultralytics exports the model into a directory named {model_name}_saved_model
-        find . -name "*.tflite" -exec cp {} app/src/main/assets/yolov8n_float16.tflite \;
+        curl -o app/src/main/assets/efficientdet_lite0.tflite https://storage.googleapis.com/download.tensorflow.org/models/tflite/task_library/object_detection/android/lite-model_efficientdet_lite0_detection_metadata_1.tflite
 
     - name: Setup Gradle
       uses: gradle/gradle-build-action@v2
