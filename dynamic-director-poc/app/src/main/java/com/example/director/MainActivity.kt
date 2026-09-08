@@ -9,6 +9,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -111,6 +113,16 @@ fun CameraScreen(hasPermission: Boolean) {
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                             .build()
                             
+                        val imageCapture = ImageCapture.Builder()
+                            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                            .build()
+                            
+                        // Phase 5: Auto Shutter State variables
+                        var consecutiveHighScores = 0
+                        var lastCaptureTime = 0L
+                        val cooldownMs = 3000L
+                        var isTakingPhoto = false
+
                         imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
                             try {
                                 val bitmap = imageProxy.toBitmap()
@@ -123,8 +135,47 @@ fun CameraScreen(hasPermission: Boolean) {
                                     // 2. OpenCV Scoring
                                     val score = ScoringEngine.calculateScore(bitmap, detection, config)
                                     currentScore = score
-                                    val prefix = if (yoloDetector.isMockMode) "[MOCK] " else ""
-                                    detectionStatus = "${prefix}Person Detected (Conf: ${(detection.confidence*100).toInt()}%)"
+                                    
+                                    // Phase 5: Auto Shutter Logic
+                                    val now = System.currentTimeMillis()
+                                    if (isTakingPhoto) {
+                                        detectionStatus = "📸 Taking Photo..."
+                                    } else if (now - lastCaptureTime < cooldownMs) {
+                                        detectionStatus = "❄️ Cooldown..."
+                                        consecutiveHighScores = 0
+                                    } else {
+                                        val prefix = if (yoloDetector.isMockMode) "[MOCK] " else ""
+                                        detectionStatus = "${prefix}Person Detected (Conf: ${(detection.confidence*100).toInt()}%)"
+                                        
+                                        if (score >= 85f) {
+                                            consecutiveHighScores++
+                                            if (consecutiveHighScores >= 3) {
+                                                isTakingPhoto = true
+                                                lastCaptureTime = now
+                                                consecutiveHighScores = 0
+                                                
+                                                val file = java.io.File(ctx.filesDir, "director_capture_${now}.jpg")
+                                                val outputOptions = ImageCapture.OutputFileOptions.Builder(file).build()
+                                                
+                                                imageCapture.takePicture(
+                                                    outputOptions,
+                                                    ContextCompat.getMainExecutor(ctx),
+                                                    object : ImageCapture.OnImageSavedCallback {
+                                                        override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                                                            isTakingPhoto = false
+                                                            Log.d("DynamicDirector", "Photo saved to ${file.absolutePath}")
+                                                        }
+                                                        override fun onError(exc: ImageCaptureException) {
+                                                            isTakingPhoto = false
+                                                            Log.e("DynamicDirector", "Capture failed", exc)
+                                                        }
+                                                    }
+                                                )
+                                            }
+                                        } else {
+                                            consecutiveHighScores = 0
+                                        }
+                                    }
                                 } else {
                                     currentScore = 0f
                                     detectionStatus = "Searching..."
@@ -144,7 +195,8 @@ fun CameraScreen(hasPermission: Boolean) {
                                 lifecycleOwner,
                                 cameraSelector,
                                 preview,
-                                imageAnalysis
+                                imageAnalysis,
+                                imageCapture
                             )
                         } catch (e: Exception) {
                             Log.e("DynamicDirector", "Use case binding failed", e)
@@ -157,7 +209,7 @@ fun CameraScreen(hasPermission: Boolean) {
             )
             
             // Developer Dashboard Overlay
-            val appVersion = "v0.1.2"
+            val appVersion = "v0.2.0"
             Box(
                 modifier = Modifier
                     .fillMaxSize()
