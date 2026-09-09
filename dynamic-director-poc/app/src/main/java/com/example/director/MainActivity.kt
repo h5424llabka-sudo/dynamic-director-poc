@@ -230,15 +230,23 @@ fun CameraScreen(hasPermission: Boolean) {
             )
             
             // Developer Dashboard Overlay
-            val appVersion = "v0.3.0"
+            val appVersion = "v0.3.1"
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(16.dp),
                 contentAlignment = Alignment.TopStart
             ) {
+                val faceText = currentFace?.let {
+                    val smile = (it.smilingProbability * 100).toInt()
+                    val isLooking = Math.abs(it.headEulerAngleY) < 15f && Math.abs(it.headEulerAngleZ) < 15f
+                    "Smile: $smile%\nLooking at Camera: ${if (isLooking) "Yes" else "No"}"
+                } ?: "Smile: -\nLooking at Camera: -"
+                
+                val poseText = "Pose: ${currentPose?.actionName ?: "None"}"
+                
                 Text(
-                    text = "Dynamic Director $appVersion\nScore: ${currentScore.toInt()}%\n$detectionStatus",
+                    text = "Dynamic Director $appVersion\nStatus: $detectionStatus\nScore: ${currentScore.toInt()}%\n$poseText\n$faceText",
                     color = if (currentScore > 85f) Color.Yellow else Color.Green,
                     style = MaterialTheme.typography.bodyLarge
                 )
