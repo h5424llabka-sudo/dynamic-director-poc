@@ -285,7 +285,7 @@ fun CameraScreen(hasPermission: Boolean) {
             )
             
             // Developer Dashboard Overlay
-            val appVersion = "v0.4.1"
+            val appVersion = "v0.4.2"
             Box(
                 modifier = Modifier
                     .fillMaxSize()
