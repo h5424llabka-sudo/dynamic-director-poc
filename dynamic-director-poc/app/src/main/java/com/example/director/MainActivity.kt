@@ -173,27 +173,61 @@ fun CameraScreen(hasPermission: Boolean) {
                                                     lastCaptureTime = now
                                                     consecutiveHighScores = 0
                                                     
-                                                    val contentValues = android.content.ContentValues().apply {
-                                                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "director_capture_${now}.jpg")
-                                                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                                                        if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.P) {
-                                                            put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/DynamicDirector")
-                                                        }
+                                                    val triggerReason = if (poseResult != null && poseResult.actionName != null) {
+                                                        "Action: ${poseResult.actionName}"
+                                                    } else if (faceResult != null) {
+                                                        "Smile: ${(faceResult.smilingProbability * 100).toInt()}%"
+                                                    } else {
+                                                        "Unknown"
                                                     }
                                                     
-                                                    val outputOptions = ImageCapture.OutputFileOptions.Builder(
-                                                        ctx.contentResolver,
-                                                        android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                                                        contentValues
-                                                    ).build()
-                                                    
                                                     imageCapture.takePicture(
-                                                        outputOptions,
                                                         ContextCompat.getMainExecutor(ctx),
-                                                        object : ImageCapture.OnImageSavedCallback {
-                                                            override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                                                                isTakingPhoto = false
-                                                                Log.d("DynamicDirector", "Photo saved to Gallery: ${output.savedUri}")
+                                                        object : ImageCapture.OnImageCapturedCallback() {
+                                                            override fun onCaptureSuccess(image: androidx.camera.core.ImageProxy) {
+                                                                try {
+                                                                    val rawBitmap = image.toBitmap()
+                                                                    val matrix = android.graphics.Matrix()
+                                                                    matrix.postRotate(image.imageInfo.rotationDegrees.toFloat())
+                                                                    val bitmap = android.graphics.Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
+                                                                    
+                                                                    val mutableBitmap = bitmap.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+                                                                    val canvas = android.graphics.Canvas(mutableBitmap)
+                                                                    val paint = android.graphics.Paint().apply {
+                                                                        color = android.graphics.Color.YELLOW
+                                                                        textSize = 120f
+                                                                        style = android.graphics.Paint.Style.FILL
+                                                                        isAntiAlias = true
+                                                                    }
+                                                                    val bgPaint = android.graphics.Paint().apply {
+                                                                        color = android.graphics.Color.argb(128, 0, 0, 0)
+                                                                        style = android.graphics.Paint.Style.FILL
+                                                                    }
+                                                                    val triggerText = "Trigger: $triggerReason"
+                                                                    val textWidth = paint.measureText(triggerText)
+                                                                    canvas.drawRect(40f, 40f, 80f + textWidth, 200f, bgPaint)
+                                                                    canvas.drawText(triggerText, 60f, 150f, paint)
+                                                                    
+                                                                    val contentValues = android.content.ContentValues().apply {
+                                                                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "director_capture_${now}.jpg")
+                                                                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                                                                        if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.P) {
+                                                                            put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/DynamicDirector")
+                                                                        }
+                                                                    }
+                                                                    val uri = ctx.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+                                                                    if (uri != null) {
+                                                                        ctx.contentResolver.openOutputStream(uri)?.use { out ->
+                                                                            mutableBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+                                                                        }
+                                                                        Log.d("DynamicDirector", "Photo saved to Gallery with text: $uri")
+                                                                    }
+                                                                } catch (e: Exception) {
+                                                                    Log.e("DynamicDirector", "Failed to process image", e)
+                                                                } finally {
+                                                                    image.close()
+                                                                    isTakingPhoto = false
+                                                                }
                                                             }
                                                             override fun onError(exc: ImageCaptureException) {
                                                                 isTakingPhoto = false
@@ -241,7 +275,7 @@ fun CameraScreen(hasPermission: Boolean) {
             )
             
             // Developer Dashboard Overlay
-            val appVersion = "v0.3.2"
+            val appVersion = "v0.3.3"
             Box(
                 modifier = Modifier
                     .fillMaxSize()
