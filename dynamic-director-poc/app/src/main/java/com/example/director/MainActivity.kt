@@ -97,6 +97,26 @@ fun CameraScreen(hasPermission: Boolean) {
         val faceAnalyzer = remember { FaceAnalyzer() }
         val poseAnalyzer = remember { PoseAnalyzer() }
         val config = remember { ConfigManager.loadConfig(context) }
+        
+        // Settings State
+        var isSettingsOpen by remember { mutableStateOf(false) }
+        val smileThresholdState = remember { mutableStateOf(80f) }
+        val cooldownSecondsState = remember { mutableStateOf(3f) }
+        val enableBanzaiState = remember { mutableStateOf(true) }
+        val enablePointingState = remember { mutableStateOf(true) }
+        val enableWavingState = remember { mutableStateOf(true) }
+        val enableThrowingState = remember { mutableStateOf(true) }
+        val enableClappingState = remember { mutableStateOf(true) }
+        
+        val getEnabledActions = {
+            val set = mutableSetOf<String>()
+            if (enableBanzaiState.value) set.add("Banzai")
+            if (enablePointingState.value) set.add("Pointing")
+            if (enableWavingState.value) set.add("Waving")
+            if (enableThrowingState.value) set.add("Throwing")
+            if (enableClappingState.value) set.add("Clapping")
+            set
+        }
 
         Box(modifier = Modifier.fillMaxSize()) {
             AndroidView(
@@ -140,7 +160,8 @@ fun CameraScreen(hasPermission: Boolean) {
                                 faceAnalyzer.analyze(bitmap, { faceResult ->
                                     currentFace = faceResult
                                     
-                                    poseAnalyzer.analyze(bitmap, { poseResult ->
+                                    val enabledActions = getEnabledActions()
+                                    poseAnalyzer.analyze(bitmap, enabledActions, { poseResult ->
                                         currentPose = poseResult
                                         
                                         val faceScore = faceResult?.let { ScoringEngine.calculateFaceScore(it) } ?: 0f
@@ -150,6 +171,7 @@ fun CameraScreen(hasPermission: Boolean) {
                                         
                                         // Phase 6 & 7: Auto Shutter Logic
                                         val now = System.currentTimeMillis()
+                                        val cooldownMs = (cooldownSecondsState.value * 1000).toLong()
                                         if (isTakingPhoto) {
                                             detectionStatus = "📸 Taking Photo..."
                                         } else if (now - lastCaptureTime < cooldownMs) {
@@ -165,8 +187,10 @@ fun CameraScreen(hasPermission: Boolean) {
                                                 detectionStatus = "Searching..."
                                             }
                                             
-                                            // Shutter threshold (Face > 80 or Pose = 100)
-                                            if (score >= 80f) {
+                                            // Shutter threshold (Face > smileThreshold or Pose = 100)
+                                            val isSmileTrigger = faceResult != null && (faceResult.smilingProbability * 100) >= smileThresholdState.value
+                                            val isPoseTrigger = poseResult != null && poseResult.actionName != null
+                                            if (isSmileTrigger || isPoseTrigger) {
                                                 consecutiveHighScores++
                                                 if (consecutiveHighScores >= 3) {
                                                     isTakingPhoto = true
@@ -275,7 +299,7 @@ fun CameraScreen(hasPermission: Boolean) {
             )
             
             // Developer Dashboard Overlay
-            val appVersion = "v0.3.3"
+            val appVersion = "v0.4.0"
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -329,6 +353,73 @@ fun CameraScreen(hasPermission: Boolean) {
                         )
                     }
                 }
+            }
+            
+            // Settings Button
+            androidx.compose.material3.FloatingActionButton(
+                onClick = { isSettingsOpen = true },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(16.dp)
+            ) {
+                Text("⚙️")
+            }
+            
+            // Settings Dialog
+            if (isSettingsOpen) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { isSettingsOpen = false },
+                    title = { Text("Settings") },
+                    text = {
+                        androidx.compose.foundation.layout.Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(androidx.compose.foundation.rememberScrollState())
+                        ) {
+                            Text("Smile Threshold: ${smileThresholdState.value.toInt()}%")
+                            androidx.compose.material3.Slider(
+                                value = smileThresholdState.value,
+                                onValueChange = { smileThresholdState.value = it },
+                                valueRange = 0f..100f
+                            )
+                            
+                            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(8.dp))
+                            Text("Cooldown: ${cooldownSecondsState.value.toInt()}s")
+                            androidx.compose.material3.Slider(
+                                value = cooldownSecondsState.value,
+                                onValueChange = { cooldownSecondsState.value = it },
+                                valueRange = 1f..10f
+                            )
+                            
+                            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(16.dp))
+                            Text("Enabled Actions:")
+                            val actionToggles = listOf(
+                                "Banzai" to enableBanzaiState,
+                                "Pointing" to enablePointingState,
+                                "Waving" to enableWavingState,
+                                "Throwing" to enableThrowingState,
+                                "Clapping" to enableClappingState
+                            )
+                            actionToggles.forEach { (name, state) ->
+                                androidx.compose.foundation.layout.Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(name, modifier = Modifier.weight(1f))
+                                    androidx.compose.material3.Switch(
+                                        checked = state.value,
+                                        onCheckedChange = { state.value = it }
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = { isSettingsOpen = false }) {
+                            Text("Close")
+                        }
+                    }
+                )
             }
         }
     } else {
