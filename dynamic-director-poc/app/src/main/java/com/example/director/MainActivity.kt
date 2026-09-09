@@ -89,11 +89,13 @@ fun CameraScreen(hasPermission: Boolean) {
         val lifecycleOwner = LocalLifecycleOwner.current
         
         var currentScore by remember { mutableStateOf(0f) }
-        var detectionStatus by remember { mutableStateOf("Waiting for Face...") }
+        var detectionStatus by remember { mutableStateOf("Waiting for AI...") }
         var currentFace by remember { mutableStateOf<FaceResult?>(null) }
+        var currentPose by remember { mutableStateOf<PoseResult?>(null) }
         
         // Initialize AI models
         val faceAnalyzer = remember { FaceAnalyzer() }
+        val poseAnalyzer = remember { PoseAnalyzer() }
         val config = remember { ConfigManager.loadConfig(context) }
 
         Box(modifier = Modifier.fillMaxSize()) {
@@ -134,15 +136,19 @@ fun CameraScreen(hasPermission: Boolean) {
                                     rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true
                                 )
                                 
-                                // ML Kit Face Detection (Asynchronous)
+                                // Chain Analyzers: Face -> Pose
                                 faceAnalyzer.analyze(bitmap, { faceResult ->
                                     currentFace = faceResult
                                     
-                                    if (faceResult != null) {
-                                        val score = ScoringEngine.calculateFaceScore(faceResult)
+                                    poseAnalyzer.analyze(bitmap, { poseResult ->
+                                        currentPose = poseResult
+                                        
+                                        val faceScore = faceResult?.let { ScoringEngine.calculateFaceScore(it) } ?: 0f
+                                        val poseScore = poseResult?.score ?: 0f
+                                        val score = maxOf(faceScore, poseScore)
                                         currentScore = score
                                         
-                                        // Phase 6: Emotional Auto Shutter Logic
+                                        // Phase 6 & 7: Auto Shutter Logic
                                         val now = System.currentTimeMillis()
                                         if (isTakingPhoto) {
                                             detectionStatus = "📸 Taking Photo..."
@@ -150,10 +156,16 @@ fun CameraScreen(hasPermission: Boolean) {
                                             detectionStatus = "❄️ Cooldown..."
                                             consecutiveHighScores = 0
                                         } else {
-                                            val smilePct = (faceResult.smilingProbability * 100).toInt()
-                                            detectionStatus = "Face Detected (Smile: $smilePct%)"
+                                            if (poseResult != null && poseResult.actionName != null) {
+                                                detectionStatus = "Action: ${poseResult.actionName}!"
+                                            } else if (faceResult != null) {
+                                                val smilePct = (faceResult.smilingProbability * 100).toInt()
+                                                detectionStatus = "Face Detected (Smile: $smilePct%)"
+                                            } else {
+                                                detectionStatus = "Searching..."
+                                            }
                                             
-                                            // Shutter threshold for smile and gaze
+                                            // Shutter threshold (Face > 80 or Pose = 100)
                                             if (score >= 80f) {
                                                 consecutiveHighScores++
                                                 if (consecutiveHighScores >= 3) {
@@ -183,14 +195,12 @@ fun CameraScreen(hasPermission: Boolean) {
                                                 consecutiveHighScores = 0
                                             }
                                         }
-                                    } else {
-                                        currentScore = 0f
-                                        detectionStatus = "Searching for faces..."
-                                        consecutiveHighScores = 0
-                                    }
+                                        imageProxy.close()
+                                    }, {
+                                        // Pose Complete
+                                    })
                                 }, {
-                                    // Complete listener to close imageProxy
-                                    imageProxy.close()
+                                    // Face Complete
                                 })
                             } catch (e: Exception) {
                                 Log.e("DynamicDirector", "Analysis failed", e)
@@ -250,6 +260,21 @@ fun CameraScreen(hasPermission: Boolean) {
                         size = androidx.compose.ui.geometry.Size(right - left, bottom - top),
                         style = androidx.compose.ui.graphics.drawscope.Stroke(width = 5f)
                     )
+                }
+            }
+
+            // Draw Pose Landmarks Overlay
+            currentPose?.let { pose ->
+                androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                    val w = size.width
+                    val h = size.height
+                    for (point in pose.landmarks) {
+                        drawCircle(
+                            color = Color.Cyan,
+                            radius = 8f,
+                            center = androidx.compose.ui.geometry.Offset(point.x * w, point.y * h)
+                        )
+                    }
                 }
             }
         }

@@ -67,6 +67,9 @@ dependencies {
     // ML Kit Face Detection
     implementation("com.google.mlkit:face-detection:16.1.6")
 
+    // ML Kit Pose Detection
+    implementation("com.google.mlkit:pose-detection:17.0.0")
+
     // OpenCV
     implementation("com.quickbirdstudios:opencv:4.5.3.0")
 }
