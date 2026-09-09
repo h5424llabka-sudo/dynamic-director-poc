@@ -173,8 +173,19 @@ fun CameraScreen(hasPermission: Boolean) {
                                                     lastCaptureTime = now
                                                     consecutiveHighScores = 0
                                                     
-                                                    val file = java.io.File(ctx.filesDir, "director_capture_${now}.jpg")
-                                                    val outputOptions = ImageCapture.OutputFileOptions.Builder(file).build()
+                                                    val contentValues = android.content.ContentValues().apply {
+                                                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "director_capture_${now}.jpg")
+                                                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                                                        if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.P) {
+                                                            put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/DynamicDirector")
+                                                        }
+                                                    }
+                                                    
+                                                    val outputOptions = ImageCapture.OutputFileOptions.Builder(
+                                                        ctx.contentResolver,
+                                                        android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                                                        contentValues
+                                                    ).build()
                                                     
                                                     imageCapture.takePicture(
                                                         outputOptions,
@@ -182,7 +193,7 @@ fun CameraScreen(hasPermission: Boolean) {
                                                         object : ImageCapture.OnImageSavedCallback {
                                                             override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                                                                 isTakingPhoto = false
-                                                                Log.d("DynamicDirector", "Photo saved to ${file.absolutePath}")
+                                                                Log.d("DynamicDirector", "Photo saved to Gallery: ${output.savedUri}")
                                                             }
                                                             override fun onError(exc: ImageCaptureException) {
                                                                 isTakingPhoto = false
@@ -230,7 +241,7 @@ fun CameraScreen(hasPermission: Boolean) {
             )
             
             // Developer Dashboard Overlay
-            val appVersion = "v0.3.1"
+            val appVersion = "v0.3.2"
             Box(
                 modifier = Modifier
                     .fillMaxSize()
