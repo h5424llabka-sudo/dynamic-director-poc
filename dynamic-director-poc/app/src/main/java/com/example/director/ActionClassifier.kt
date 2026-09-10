@@ -192,6 +192,36 @@ class ActionClassifier {
     private fun evaluateWaving(tensor: Array<FloatArray>): Float {
         var bestScore = 0f
 
+        // Evaluate clapping penalty
+        var clappingPenalty = 0f
+        val distances = mutableListOf<Float>()
+        for (f in tensor) {
+            val lc = getConf(f, L_WRIST)
+            val rc = getConf(f, R_WRIST)
+            if (lc > 0.3f && rc > 0.3f) {
+                distances.add(distance(
+                    getX(f, L_WRIST), getY(f, L_WRIST),
+                    getX(f, R_WRIST), getY(f, R_WRIST)
+                ))
+            }
+        }
+        if (distances.size >= 8) {
+            var reversals = 0
+            var lastDelta = 0f
+            for (i in 1 until distances.size) {
+                val delta = distances[i] - distances[i - 1]
+                if (abs(delta) > 0.05f) {
+                    if (lastDelta != 0f && delta * lastDelta < 0f) {
+                        reversals++
+                    }
+                    lastDelta = delta
+                }
+            }
+            if (reversals >= 4) {
+                clappingPenalty = 0.5f
+            }
+        }
+
         for (wristIdx in listOf(L_WRIST, R_WRIST)) {
             val shoulderIdx = if (wristIdx == L_WRIST) L_SHOULDER else R_SHOULDER
 
@@ -235,13 +265,14 @@ class ActionClassifier {
             val xRange = (xPositions.max() - xPositions.min())
 
             // Need at least 2 reversals (one back-and-forth cycle)
-            // Amplitude must be significant (> 0.5 shoulder widths in normalized space)
-            if (reversals >= 2 && xRange > 0.5f) {
+            // Amplitude must be significant (> 0.3 shoulder widths in normalized space)
+            if (reversals >= 2 && xRange > 0.3f) {
                 val reversalScore = (reversals.toFloat() / 4f).coerceIn(0f, 1f)
                 val amplitudeScore = (xRange / 1.5f).coerceIn(0f, 1f)
                 val raisedScore = ((shoulderY - wristY) / 1.0f).coerceIn(0f, 1f)
 
-                val score = (reversalScore * 0.4f + amplitudeScore * 0.3f + raisedScore * 0.3f)
+                var score = (reversalScore * 0.4f + amplitudeScore * 0.3f + raisedScore * 0.3f)
+                score -= clappingPenalty
                 bestScore = maxOf(bestScore, score)
             }
         }

@@ -96,6 +96,7 @@ fun CameraScreen(hasPermission: Boolean) {
         var currentPose by remember { mutableStateOf<PoseResult?>(null) }
         var triggerStatus by remember { mutableStateOf("") }
         var actionScoresText by remember { mutableStateOf("") }
+        var imageSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
         
         // Initialize AI models
         val faceAnalyzer = remember { FaceAnalyzer() }
@@ -171,6 +172,8 @@ fun CameraScreen(hasPermission: Boolean) {
                                 val bitmap = android.graphics.Bitmap.createBitmap(
                                     rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true
                                 )
+                                
+                                imageSize = androidx.compose.ui.geometry.Size(bitmap.width.toFloat(), bitmap.height.toFloat())
                                 
                                 // Chain Analyzers: Face -> Pose -> TriggerController
                                 faceAnalyzer.analyze(bitmap, { faceResult ->
@@ -344,20 +347,33 @@ fun CameraScreen(hasPermission: Boolean) {
                 )
             }
             
+            // Helper function for FILL_CENTER coordinate mapping
+            fun mapCoordinate(x: Float, y: Float, viewWidth: Float, viewHeight: Float, imgWidth: Float, imgHeight: Float): androidx.compose.ui.geometry.Offset {
+                if (imgWidth == 0f || imgHeight == 0f) return androidx.compose.ui.geometry.Offset(x * viewWidth, y * viewHeight)
+                
+                val scale = maxOf(viewWidth / imgWidth, viewHeight / imgHeight)
+                val offsetX = (viewWidth - imgWidth * scale) / 2f
+                val offsetY = (viewHeight - imgHeight * scale) / 2f
+                
+                return androidx.compose.ui.geometry.Offset(
+                    x = (x * imgWidth) * scale + offsetX,
+                    y = (y * imgHeight) * scale + offsetY
+                )
+            }
+
             // Draw BBox Overlay
             currentFace?.let { face ->
                 androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
                     val w = size.width
                     val h = size.height
-                    val left = face.x1 * w
-                    val top = face.y1 * h
-                    val right = face.x2 * w
-                    val bottom = face.y2 * h
+                    
+                    val topLeft = mapCoordinate(face.x1, face.y1, w, h, imageSize.width, imageSize.height)
+                    val bottomRight = mapCoordinate(face.x2, face.y2, w, h, imageSize.width, imageSize.height)
                     
                     drawRect(
                         color = Color.Green,
-                        topLeft = androidx.compose.ui.geometry.Offset(left, top),
-                        size = androidx.compose.ui.geometry.Size(right - left, bottom - top),
+                        topLeft = topLeft,
+                        size = androidx.compose.ui.geometry.Size(bottomRight.x - topLeft.x, bottomRight.y - topLeft.y),
                         style = androidx.compose.ui.graphics.drawscope.Stroke(width = 5f)
                     )
                 }
@@ -372,7 +388,7 @@ fun CameraScreen(hasPermission: Boolean) {
                         drawCircle(
                             color = Color.Cyan,
                             radius = 8f,
-                            center = androidx.compose.ui.geometry.Offset(point.x * w, point.y * h)
+                            center = mapCoordinate(point.x, point.y, w, h, imageSize.width, imageSize.height)
                         )
                     }
                 }
