@@ -300,7 +300,7 @@ fun CameraScreen(hasPermission: Boolean) {
                                                     triggerStatus = ""
                                                 }
                                             }
-                                        }         }
+                                        }
                                         
                                         imageProxy.close()
                                     }, {

@@ -8,6 +8,7 @@ import com.google.mlkit.vision.pose.Pose
 import com.google.mlkit.vision.pose.PoseDetection
 import com.google.mlkit.vision.pose.PoseLandmark
 import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions
+import android.content.Context
 
 /**
  * Result of pose analysis for a single frame.
@@ -39,7 +40,6 @@ data class PoseResult(
  * The action classifier operates on normalized time-series data for
  * body-proportion-invariant action recognition.
  */
-import android.content.Context
 
 class PoseAnalyzer(context: Context) {
     // Stream mode for real-time pose detection

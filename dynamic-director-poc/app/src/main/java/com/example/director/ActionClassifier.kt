@@ -3,6 +3,10 @@ package com.example.director
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.sqrt
+import android.content.Context
+import org.tensorflow.lite.Interpreter
+import java.io.FileInputStream
+import java.nio.channels.FileChannel
 
 /**
  * Result of action classification with per-action confidence scores.
@@ -26,10 +30,6 @@ data class ActionResult(
  *   0: Nose, 1: L-Shoulder, 2: R-Shoulder, 3: L-Elbow, 4: R-Elbow,
  *   5: L-Wrist, 6: R-Wrist, 7: L-Hip, 8: R-Hip
  */
-import android.content.Context
-import org.tensorflow.lite.Interpreter
-import java.io.FileInputStream
-import java.nio.channels.FileChannel
 
 class ActionClassifier(context: Context) {
 
