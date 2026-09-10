@@ -56,7 +56,8 @@ class TriggerController(
     fun update(
         actionResult: ActionResult?,
         faceScore: Float,
-        smileProbability: Float
+        smileProbability: Float,
+        referenceScore: Float = 0f
     ): TriggerEvent {
         val now = System.currentTimeMillis()
 
@@ -75,11 +76,15 @@ class TriggerController(
 
         // Evaluate smile trigger (simpler: just check threshold with confirmation)
         val smileTriggered = smileProbability >= smileThreshold
+        
+        // Evaluate reference composition trigger
+        val referenceTriggered = referenceScore >= 0.8f
 
         // Build status info
         val scores = mutableMapOf<String, Float>()
         actionResult?.rawScores?.let { scores.putAll(it) }
         scores["Smile"] = smileProbability * 100f
+        scores["RefMatch"] = referenceScore * 100f
 
         return when {
             poseTriggered -> {
@@ -99,6 +104,17 @@ class TriggerController(
                     TriggerEvent.Fire(reason, smileProbability)
                 } else {
                     TriggerEvent.Idle("Smile confirming (${consecutiveActiveFrames}/$confirmationFrames)", scores)
+                }
+            }
+            referenceTriggered -> {
+                consecutiveActiveFrames++
+                if (consecutiveActiveFrames >= confirmationFrames) {
+                    val reason = "Composition Match: ${(referenceScore * 100).toInt()}%"
+                    lastCaptureTime = now
+                    resetState()
+                    TriggerEvent.Fire(reason, referenceScore)
+                } else {
+                    TriggerEvent.Idle("Composition confirming (${consecutiveActiveFrames}/$confirmationFrames)", scores)
                 }
             }
             else -> {

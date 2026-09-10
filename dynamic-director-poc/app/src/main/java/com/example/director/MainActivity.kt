@@ -101,6 +101,12 @@ fun CameraScreen(hasPermission: Boolean) {
         // Initialize AI models
         val faceAnalyzer = remember { FaceAnalyzer() }
         val poseAnalyzer = remember { PoseAnalyzer(context) }
+        val segmentationEngine = remember { SegmentationEngine() }
+        val referenceDirector = remember { 
+            ReferenceDirector().apply {
+                setReferenceImage(android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888))
+            }
+        }
         val config = remember { ConfigManager.loadConfig(context) }
         
         // Initialize TriggerController
@@ -214,11 +220,18 @@ fun CameraScreen(hasPermission: Boolean) {
                                             frameBuffer.removeFirst().bitmap.recycle()
                                         }
                                         
+                                        val referenceScore = if (referenceDirector.isActive) {
+                                            referenceDirector.calculateMatchScore(faceResult, poseResult)
+                                        } else {
+                                            0f
+                                        }
+
                                         // 2. TriggerController decides whether to fire
                                         val triggerEvent = triggerController.value.update(
                                             actionResult = actionResult,
                                             faceScore = faceScore,
-                                            smileProbability = smileProbability
+                                            smileProbability = smileProbability,
+                                            referenceScore = referenceScore
                                         )
                                         
                                         // 3. Handle Capture State Machine
@@ -231,49 +244,56 @@ fun CameraScreen(hasPermission: Boolean) {
                                                 val triggerR = savedTriggerReason
                                                 val triggerC = savedTriggerConfidence
                                                 
-                                                Executors.newSingleThreadExecutor().execute {
-                                                    try {
-                                                        val now = System.currentTimeMillis()
-                                                        val canvas = android.graphics.Canvas(bitmapToSave)
-                                                        val paint = android.graphics.Paint().apply {
-                                                            color = android.graphics.Color.YELLOW
-                                                            textSize = 48f
-                                                            style = android.graphics.Paint.Style.FILL
-                                                            isAntiAlias = true
-                                                        }
-                                                        val bgPaint = android.graphics.Paint().apply {
-                                                            color = android.graphics.Color.argb(128, 0, 0, 0)
-                                                            style = android.graphics.Paint.Style.FILL
-                                                        }
-                                                        val triggerText = "Trigger: $triggerR (Smile: ${(bestShot.smileProbability * 100).toInt()}%)"
-                                                        val confText = "Confidence: ${(triggerC * 100).toInt()}%"
-                                                        val textWidth = maxOf(paint.measureText(triggerText), paint.measureText(confText))
-                                                        canvas.drawRect(20f, 20f, 60f + textWidth, 140f, bgPaint)
-                                                        canvas.drawText(triggerText, 40f, 70f, paint)
-                                                        canvas.drawText(confText, 40f, 120f, paint)
-                                                        
-                                                        val contentValues = android.content.ContentValues().apply {
-                                                            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "director_capture_${now}.jpg")
-                                                            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                                                            if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.P) {
-                                                                put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/DynamicDirector")
+                                                segmentationEngine.applyBokehEffect(bitmapToSave, { blurredBitmap ->
+                                                    Executors.newSingleThreadExecutor().execute {
+                                                        try {
+                                                            val now = System.currentTimeMillis()
+                                                            val resultToSave = blurredBitmap.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+                                                            val canvas = android.graphics.Canvas(resultToSave)
+                                                            val paint = android.graphics.Paint().apply {
+                                                                color = android.graphics.Color.YELLOW
+                                                                textSize = 48f
+                                                                style = android.graphics.Paint.Style.FILL
+                                                                isAntiAlias = true
                                                             }
-                                                        }
-                                                        val uri = ctx.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-                                                        uri?.let {
-                                                            ctx.contentResolver.openOutputStream(it)?.use { out ->
-                                                                bitmapToSave.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+                                                            val bgPaint = android.graphics.Paint().apply {
+                                                                color = android.graphics.Color.argb(128, 0, 0, 0)
+                                                                style = android.graphics.Paint.Style.FILL
                                                             }
-                                                            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                                                android.widget.Toast.makeText(ctx, "Best Shot Saved!", android.widget.Toast.LENGTH_SHORT).show()
+                                                            val triggerText = "Trigger: $triggerR (Smile: ${(bestShot.smileProbability * 100).toInt()}%)"
+                                                            val confText = "Confidence: ${(triggerC * 100).toInt()}%"
+                                                            val textWidth = maxOf(paint.measureText(triggerText), paint.measureText(confText))
+                                                            canvas.drawRect(20f, 20f, 60f + textWidth, 140f, bgPaint)
+                                                            canvas.drawText(triggerText, 40f, 70f, paint)
+                                                            canvas.drawText(confText, 40f, 120f, paint)
+                                                            
+                                                            val contentValues = android.content.ContentValues().apply {
+                                                                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "director_capture_${now}.jpg")
+                                                                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                                                                if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.P) {
+                                                                    put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/DynamicDirector")
+                                                                }
                                                             }
+                                                            val uri = ctx.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+                                                            uri?.let {
+                                                                ctx.contentResolver.openOutputStream(it)?.use { out ->
+                                                                    resultToSave.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+                                                                }
+                                                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                                                    android.widget.Toast.makeText(ctx, "Best Shot (Bokeh) Saved!", android.widget.Toast.LENGTH_SHORT).show()
+                                                                }
+                                                            }
+                                                            resultToSave.recycle()
+                                                        } catch (e: Exception) {
+                                                            e.printStackTrace()
+                                                        } finally {
+                                                            bitmapToSave.recycle() // Recycle original
                                                         }
-                                                    } catch (e: Exception) {
-                                                        e.printStackTrace()
-                                                    } finally {
-                                                        bitmapToSave.recycle()
                                                     }
-                                                }
+                                                }, { e ->
+                                                    android.util.Log.e("DynamicDirector", "Bokeh failed", e)
+                                                    bitmapToSave.recycle()
+                                                })
                                                 isTakingPhoto = false
                                             }
                                         } else {
