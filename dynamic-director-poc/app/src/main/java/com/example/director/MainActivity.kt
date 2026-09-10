@@ -91,20 +91,26 @@ fun CameraScreen(hasPermission: Boolean) {
         val context = LocalContext.current
         val lifecycleOwner = LocalLifecycleOwner.current
         
-        var currentScore by remember { mutableStateOf(0f) }
         var detectionStatus by remember { mutableStateOf("Waiting for AI...") }
         var currentFace by remember { mutableStateOf<FaceResult?>(null) }
         var currentPose by remember { mutableStateOf<PoseResult?>(null) }
+        var triggerStatus by remember { mutableStateOf("") }
+        var actionScoresText by remember { mutableStateOf("") }
         
         // Initialize AI models
         val faceAnalyzer = remember { FaceAnalyzer() }
         val poseAnalyzer = remember { PoseAnalyzer() }
         val config = remember { ConfigManager.loadConfig(context) }
         
+        // Initialize TriggerController
+        val triggerController = remember { mutableStateOf(TriggerController()) }
+        
         // Settings State
         var isSettingsOpen by remember { mutableStateOf(false) }
         val smileThresholdState = remember { mutableStateOf(80f) }
         val cooldownSecondsState = remember { mutableStateOf(3f) }
+        val activationThresholdState = remember { mutableStateOf(70f) }
+        val confirmationFramesState = remember { mutableStateOf(3f) }
         val enableBanzaiState = remember { mutableStateOf(true) }
         val enablePointingState = remember { mutableStateOf(true) }
         val enableWavingState = remember { mutableStateOf(true) }
@@ -143,10 +149,6 @@ fun CameraScreen(hasPermission: Boolean) {
                             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                             .build()
                             
-                        // Phase 5: Auto Shutter State variables
-                        var consecutiveHighScores = 0
-                        var lastCaptureTime = 0L
-                        val cooldownMs = 3000L
                         var isTakingPhoto = false
 
                         imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
@@ -160,7 +162,7 @@ fun CameraScreen(hasPermission: Boolean) {
                                     rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true
                                 )
                                 
-                                // Chain Analyzers: Face -> Pose
+                                // Chain Analyzers: Face -> Pose -> TriggerController
                                 faceAnalyzer.analyze(bitmap, { faceResult ->
                                     currentFace = faceResult
                                     
@@ -168,88 +170,94 @@ fun CameraScreen(hasPermission: Boolean) {
                                     poseAnalyzer.analyze(bitmap, enabledActions, { poseResult ->
                                         currentPose = poseResult
                                         
-                                        val faceScore = faceResult?.let { ScoringEngine.calculateFaceScore(it) } ?: 0f
-                                        val poseScore = poseResult?.score ?: 0f
-                                        val score = maxOf(faceScore, poseScore)
-                                        currentScore = score
+                                        // Build action scores text for dashboard
+                                        val scoresBuilder = StringBuilder()
+                                        poseResult?.rawScores?.forEach { (name, score) ->
+                                            scoresBuilder.append("  $name: ${(score * 100).toInt()}%\n")
+                                        }
+                                        actionScoresText = scoresBuilder.toString()
                                         
-                                        // Phase 6 & 7: Auto Shutter Logic
-                                        val now = System.currentTimeMillis()
-                                        val cooldownMs = (cooldownSecondsState.value * 1000).toLong()
-                                        if (isTakingPhoto) {
-                                            detectionStatus = "📸 Taking Photo..."
-                                        } else if (now - lastCaptureTime < cooldownMs) {
-                                            detectionStatus = "❄️ Cooldown..."
-                                            consecutiveHighScores = 0
-                                        } else {
-                                            if (poseResult != null && poseResult.actionName != null) {
-                                                detectionStatus = "Action: ${poseResult.actionName}!"
-                                            } else if (faceResult != null) {
-                                                val smilePct = (faceResult.smilingProbability * 100).toInt()
-                                                detectionStatus = "Face Detected (Smile: $smilePct%)"
-                                            } else {
-                                                detectionStatus = "Searching..."
-                                            }
-                                            
-                                            // Shutter threshold (Face > smileThreshold or Pose = 100)
-                                            val isSmileTrigger = faceResult != null && (faceResult.smilingProbability * 100) >= smileThresholdState.value
-                                            val isPoseTrigger = poseResult != null && poseResult.actionName != null
-                                            
-                                            // Minimize lag: Fire immediately on trigger
-                                            if (isSmileTrigger || isPoseTrigger) {
-                                                isTakingPhoto = true
-                                                lastCaptureTime = now
-                                                
-                                                val triggerReason = if (poseResult != null && poseResult.actionName != null) {
-                                                    "Action: ${poseResult.actionName}"
-                                                } else if (faceResult != null) {
-                                                    "Smile: ${(faceResult.smilingProbability * 100).toInt()}%"
-                                                } else {
-                                                    "Unknown"
-                                                }
-                                                
-                                                // Zero-lag capture: Save the exact bitmap we just analyzed instead of calling takePicture
-                                                Executors.newSingleThreadExecutor().execute {
-                                                    try {
-                                                        val mutableBitmap = bitmap.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
-                                                        val canvas = android.graphics.Canvas(mutableBitmap)
-                                                        val paint = android.graphics.Paint().apply {
-                                                            color = android.graphics.Color.YELLOW
-                                                            textSize = 48f
-                                                            style = android.graphics.Paint.Style.FILL
-                                                            isAntiAlias = true
-                                                        }
-                                                        val bgPaint = android.graphics.Paint().apply {
-                                                            color = android.graphics.Color.argb(128, 0, 0, 0)
-                                                            style = android.graphics.Paint.Style.FILL
-                                                        }
-                                                        val triggerText = "Trigger: $triggerReason"
-                                                        val textWidth = paint.measureText(triggerText)
-                                                        canvas.drawRect(20f, 20f, 60f + textWidth, 90f, bgPaint)
-                                                        canvas.drawText(triggerText, 40f, 70f, paint)
-                                                        
-                                                        val contentValues = android.content.ContentValues().apply {
-                                                            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "director_capture_${now}.jpg")
-                                                            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                                                            if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.P) {
-                                                                put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/DynamicDirector")
+                                        // Convert to ActionResult for TriggerController
+                                        val actionResult = poseResult?.let {
+                                            ActionResult(
+                                                actionName = it.actionName,
+                                                confidence = it.confidence,
+                                                rawScores = it.rawScores
+                                            )
+                                        }
+                                        
+                                        val faceScore = faceResult?.let { ScoringEngine.calculateFaceScore(it) } ?: 0f
+                                        val smileProbability = faceResult?.smilingProbability ?: 0f
+                                        
+                                        // TriggerController decides whether to fire
+                                        val triggerEvent = triggerController.value.update(
+                                            actionResult = actionResult,
+                                            faceScore = faceScore,
+                                            smileProbability = smileProbability
+                                        )
+                                        
+                                        when (triggerEvent) {
+                                            is TriggerEvent.Fire -> {
+                                                if (!isTakingPhoto) {
+                                                    isTakingPhoto = true
+                                                    detectionStatus = "📸 ${triggerEvent.reason}"
+                                                    triggerStatus = "🎯 FIRED! (${(triggerEvent.confidence * 100).toInt()}%)"
+                                                    
+                                                    // Zero-lag capture: Save the exact bitmap we just analyzed
+                                                    Executors.newSingleThreadExecutor().execute {
+                                                        try {
+                                                            val now = System.currentTimeMillis()
+                                                            val mutableBitmap = bitmap.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+                                                            val canvas = android.graphics.Canvas(mutableBitmap)
+                                                            val paint = android.graphics.Paint().apply {
+                                                                color = android.graphics.Color.YELLOW
+                                                                textSize = 48f
+                                                                style = android.graphics.Paint.Style.FILL
+                                                                isAntiAlias = true
                                                             }
-                                                        }
-                                                        val uri = ctx.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-                                                        if (uri != null) {
-                                                            ctx.contentResolver.openOutputStream(uri)?.use { out ->
-                                                                mutableBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+                                                            val bgPaint = android.graphics.Paint().apply {
+                                                                color = android.graphics.Color.argb(128, 0, 0, 0)
+                                                                style = android.graphics.Paint.Style.FILL
                                                             }
-                                                            Log.d("DynamicDirector", "Zero-lag photo saved: $uri")
+                                                            val triggerText = "Trigger: ${triggerEvent.reason}"
+                                                            val confText = "Confidence: ${(triggerEvent.confidence * 100).toInt()}%"
+                                                            val textWidth = maxOf(paint.measureText(triggerText), paint.measureText(confText))
+                                                            canvas.drawRect(20f, 20f, 60f + textWidth, 140f, bgPaint)
+                                                            canvas.drawText(triggerText, 40f, 70f, paint)
+                                                            canvas.drawText(confText, 40f, 120f, paint)
+                                                            
+                                                            val contentValues = android.content.ContentValues().apply {
+                                                                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "director_capture_${now}.jpg")
+                                                                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                                                                if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.P) {
+                                                                    put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/DynamicDirector")
+                                                                }
+                                                            }
+                                                            val uri = ctx.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+                                                            if (uri != null) {
+                                                                ctx.contentResolver.openOutputStream(uri)?.use { out ->
+                                                                    mutableBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+                                                                }
+                                                                Log.d("DynamicDirector", "Zero-lag photo saved: $uri | Trigger: ${triggerEvent.reason}")
+                                                            }
+                                                        } catch (e: Exception) {
+                                                            Log.e("DynamicDirector", "Failed to save zero-lag image", e)
+                                                        } finally {
+                                                            isTakingPhoto = false
                                                         }
-                                                    } catch (e: Exception) {
-                                                        Log.e("DynamicDirector", "Failed to save zero-lag image", e)
-                                                    } finally {
-                                                        isTakingPhoto = false
                                                     }
                                                 }
                                             }
+                                            is TriggerEvent.Cooldown -> {
+                                                detectionStatus = "❄️ Cooldown (${triggerEvent.remainingMs / 1000}s)"
+                                                triggerStatus = ""
+                                            }
+                                            is TriggerEvent.Idle -> {
+                                                detectionStatus = triggerEvent.status
+                                                triggerStatus = ""
+                                            }
                                         }
+                                        
                                         imageProxy.close()
                                     }, {
                                         // Pose Complete
@@ -285,7 +293,7 @@ fun CameraScreen(hasPermission: Boolean) {
             )
             
             // Developer Dashboard Overlay
-            val appVersion = "v0.4.2"
+            val appVersion = "v0.5.0"
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -298,11 +306,30 @@ fun CameraScreen(hasPermission: Boolean) {
                     "Smile: $smile%\nLooking at Camera: ${if (isLooking) "Yes" else "No"}"
                 } ?: "Smile: -\nLooking at Camera: -"
                 
-                val poseText = "Pose: ${currentPose?.actionName ?: "None"}"
+                val poseText = "Pose: ${currentPose?.actionName ?: "None"}" +
+                    if (currentPose?.confidence ?: 0f > 0f) " (${(currentPose!!.confidence * 100).toInt()}%)" else ""
+                
+                val dashboardText = buildString {
+                    appendLine("Dynamic Director $appVersion")
+                    appendLine("Status: $detectionStatus")
+                    appendLine(poseText)
+                    appendLine(faceText)
+                    if (actionScoresText.isNotEmpty()) {
+                        appendLine("--- Action Scores ---")
+                        append(actionScoresText)
+                    }
+                    if (triggerStatus.isNotEmpty()) {
+                        appendLine(triggerStatus)
+                    }
+                }
                 
                 Text(
-                    text = "Dynamic Director $appVersion\nStatus: $detectionStatus\nScore: ${currentScore.toInt()}%\n$poseText\n$faceText",
-                    color = if (currentScore > 85f) Color.Yellow else Color.Green,
+                    text = dashboardText,
+                    color = when {
+                        triggerStatus.isNotEmpty() -> Color.Yellow
+                        currentPose?.actionName != null -> Color(0xFF00E5FF)  // Cyan
+                        else -> Color.Green
+                    },
                     style = MaterialTheme.typography.bodyLarge
                 )
             }
@@ -362,6 +389,10 @@ fun CameraScreen(hasPermission: Boolean) {
                                 .fillMaxWidth()
                                 .verticalScroll(androidx.compose.foundation.rememberScrollState())
                         ) {
+                            // --- Trigger Settings ---
+                            Text("Trigger Settings", style = MaterialTheme.typography.titleSmall)
+                            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(8.dp))
+                            
                             Text("Smile Threshold: ${smileThresholdState.value.toInt()}%")
                             androidx.compose.material3.Slider(
                                 value = smileThresholdState.value,
@@ -377,8 +408,41 @@ fun CameraScreen(hasPermission: Boolean) {
                                 valueRange = 1f..10f
                             )
                             
+                            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(8.dp))
+                            Text("Activation Threshold: ${activationThresholdState.value.toInt()}%")
+                            androidx.compose.material3.Slider(
+                                value = activationThresholdState.value,
+                                onValueChange = { activationThresholdState.value = it },
+                                valueRange = 30f..100f
+                            )
+                            
+                            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(8.dp))
+                            Text("Confirmation Frames: ${confirmationFramesState.value.toInt()}")
+                            androidx.compose.material3.Slider(
+                                value = confirmationFramesState.value,
+                                onValueChange = { confirmationFramesState.value = it },
+                                valueRange = 1f..10f,
+                                steps = 8
+                            )
+                            
+                            // Apply button for trigger settings
+                            androidx.compose.material3.TextButton(
+                                onClick = {
+                                    triggerController.value = triggerController.value.updateConfig(
+                                        newActivationThreshold = activationThresholdState.value / 100f,
+                                        newCooldownMs = (cooldownSecondsState.value * 1000).toLong(),
+                                        newConfirmationFrames = confirmationFramesState.value.toInt(),
+                                        newSmileThreshold = smileThresholdState.value / 100f
+                                    )
+                                }
+                            ) {
+                                Text("Apply Trigger Settings")
+                            }
+                            
                             androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(16.dp))
-                            Text("Enabled Actions:")
+                            
+                            // --- Action Toggles ---
+                            Text("Enabled Actions:", style = MaterialTheme.typography.titleSmall)
                             val actionToggles = listOf(
                                 "Banzai" to enableBanzaiState,
                                 "Pointing" to enablePointingState,
