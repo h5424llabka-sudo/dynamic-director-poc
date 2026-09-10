@@ -62,6 +62,7 @@ dependencies {
     implementation("androidx.camera:camera-view:${camerax_version}")
 
     // TensorFlow Lite
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
     implementation("org.tensorflow:tensorflow-lite-task-vision:0.4.4")
 
     // ML Kit Face Detection

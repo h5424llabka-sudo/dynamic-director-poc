@@ -26,7 +26,31 @@ data class ActionResult(
  *   0: Nose, 1: L-Shoulder, 2: R-Shoulder, 3: L-Elbow, 4: R-Elbow,
  *   5: L-Wrist, 6: R-Wrist, 7: L-Hip, 8: R-Hip
  */
-class ActionClassifier {
+import android.content.Context
+import org.tensorflow.lite.Interpreter
+import java.io.FileInputStream
+import java.nio.channels.FileChannel
+
+class ActionClassifier(context: Context) {
+
+    private var tflite: Interpreter? = null
+
+    init {
+        try {
+            val assetFileDescriptor = context.assets.openFd("action_model_fp16.tflite")
+            val fileInputStream = FileInputStream(assetFileDescriptor.fileDescriptor)
+            val fileChannel = fileInputStream.channel
+            val mappedByteBuffer = fileChannel.map(
+                FileChannel.MapMode.READ_ONLY, 
+                assetFileDescriptor.startOffset, 
+                assetFileDescriptor.declaredLength
+            )
+            tflite = Interpreter(mappedByteBuffer)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            // Fallback to rule-based only if model loading fails
+        }
+    }
 
     companion object {
         private const val C = PoseTimeSeriesBuffer.CHANNELS_PER_KEYPOINT  // 3
@@ -51,31 +75,65 @@ class ActionClassifier {
      * @return ActionResult with the best action and per-action scores
      */
     fun classify(tensor: Array<FloatArray>, enabledActions: Set<String>): ActionResult {
-        val scores = mutableMapOf<String, Float>()
+        val ruleScores = mutableMapOf<String, Float>()
         val lastFrame = tensor.last()
 
-        if (enabledActions.contains("Banzai")) {
-            scores["Banzai"] = evaluateBanzai(lastFrame, tensor)
-        }
-        if (enabledActions.contains("Pointing")) {
-            scores["Pointing"] = evaluatePointing(lastFrame)
-        }
-        if (enabledActions.contains("Waving")) {
-            scores["Waving"] = evaluateWaving(tensor)
-        }
-        if (enabledActions.contains("Throwing")) {
-            scores["Throwing"] = evaluateThrowing(tensor)
-        }
-        if (enabledActions.contains("Clapping")) {
-            scores["Clapping"] = evaluateClapping(lastFrame, tensor)
+        ruleScores["Banzai"] = evaluateBanzai(lastFrame, tensor)
+        ruleScores["Pointing"] = evaluatePointing(lastFrame)
+        ruleScores["Waving"] = evaluateWaving(tensor)
+        ruleScores["Throwing"] = evaluateThrowing(tensor)
+        ruleScores["Clapping"] = evaluateClapping(lastFrame, tensor)
+
+        // 2. CNN TFLite Inference
+        val cnnScores = mutableMapOf<String, Float>()
+        tflite?.let { interpreter ->
+            // Format input tensor: [1, 30, 27]
+            val input = Array(1) { Array(30) { FloatArray(27) } }
+            for (i in 0 until 30) {
+                if (i < tensor.size) {
+                    System.arraycopy(tensor[i], 0, input[0][i], 0, 27)
+                }
+            }
+            
+            // Output shape: [1, 6]
+            val output = Array(1) { FloatArray(6) }
+            try {
+                interpreter.run(input, output)
+                val probs = output[0]
+                // Classes: 0=None, 1=Banzai, 2=Pointing, 3=Waving, 4=Throwing, 5=Clapping
+                cnnScores["Banzai"] = probs[1]
+                cnnScores["Pointing"] = probs[2]
+                cnnScores["Waving"] = probs[3]
+                cnnScores["Throwing"] = probs[4]
+                cnnScores["Clapping"] = probs[5]
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
 
-        // Find the best action (only ignore if all scores are exactly 0)
-        val bestEntry = scores.maxByOrNull { it.value }
-        return if (bestEntry != null && bestEntry.value > 0f) {
-            ActionResult(bestEntry.key, bestEntry.value, scores)
+        // 3. Ensemble Scoring
+        val finalScores = mutableMapOf<String, Float>()
+        val actions = listOf("Banzai", "Pointing", "Waving", "Throwing", "Clapping")
+        for (action in actions) {
+            val r = ruleScores[action] ?: 0f
+            val c = cnnScores[action] ?: 0f
+            finalScores[action] = if (cnnScores.isNotEmpty()) (r * 0.5f + c * 0.5f) else r
+        }
+
+        // Find the best action among ENABLED actions (only ignore if all scores are exactly 0)
+        var bestAction: String? = null
+        var bestScore = 0f
+        for ((action, score) in finalScores) {
+            if (enabledActions.contains(action) && score > bestScore) {
+                bestScore = score
+                bestAction = action
+            }
+        }
+
+        return if (bestAction != null && bestScore > 0f) {
+            ActionResult(bestAction, bestScore, finalScores)
         } else {
-            ActionResult(null, 0f, scores)
+            ActionResult(null, 0f, finalScores)
         }
     }
 

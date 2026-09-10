@@ -97,10 +97,11 @@ fun CameraScreen(hasPermission: Boolean) {
         var triggerStatus by remember { mutableStateOf("") }
         var actionScoresText by remember { mutableStateOf("") }
         var imageSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
+        val context = androidx.compose.ui.platform.LocalContext.current
         
         // Initialize AI models
         val faceAnalyzer = remember { FaceAnalyzer() }
-        val poseAnalyzer = remember { PoseAnalyzer() }
+        val poseAnalyzer = remember { PoseAnalyzer(context) }
         val config = remember { ConfigManager.loadConfig(context) }
         
         // Initialize TriggerController
@@ -161,6 +162,12 @@ fun CameraScreen(hasPermission: Boolean) {
                             .build()
                             
                         var isTakingPhoto = false
+                        
+                        data class BufferedFrame(val bitmap: android.graphics.Bitmap, val smileProbability: Float, val timestamp: Long)
+                        val frameBuffer = java.util.LinkedList<BufferedFrame>()
+                        var capturingFutureFramesCount = 0
+                        var savedTriggerReason = ""
+                        var savedTriggerConfidence = 0f
 
                         imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
                             try {
@@ -202,74 +209,98 @@ fun CameraScreen(hasPermission: Boolean) {
                                         val faceScore = faceResult?.let { ScoringEngine.calculateFaceScore(it) } ?: 0f
                                         val smileProbability = faceResult?.smilingProbability ?: 0f
                                         
-                                        // TriggerController decides whether to fire
+                                        // 1. Maintain Best Shot Buffer (Max 20 frames = ~0.6s)
+                                        frameBuffer.addLast(BufferedFrame(bitmap.copy(android.graphics.Bitmap.Config.ARGB_8888, false), smileProbability, System.currentTimeMillis()))
+                                        if (frameBuffer.size > 20) {
+                                            frameBuffer.removeFirst().bitmap.recycle()
+                                        }
+                                        
+                                        // 2. TriggerController decides whether to fire
                                         val triggerEvent = triggerController.value.update(
                                             actionResult = actionResult,
                                             faceScore = faceScore,
                                             smileProbability = smileProbability
                                         )
                                         
-                                        when (triggerEvent) {
-                                            is TriggerEvent.Fire -> {
-                                                if (!isTakingPhoto) {
-                                                    isTakingPhoto = true
-                                                    detectionStatus = "📸 ${triggerEvent.reason}"
-                                                    triggerStatus = "🎯 FIRED! (${(triggerEvent.confidence * 100).toInt()}%)"
-                                                    
-                                                    // Zero-lag capture: Save the exact bitmap we just analyzed
-                                                    Executors.newSingleThreadExecutor().execute {
-                                                        try {
-                                                            val now = System.currentTimeMillis()
-                                                            val mutableBitmap = bitmap.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
-                                                            val canvas = android.graphics.Canvas(mutableBitmap)
-                                                            val paint = android.graphics.Paint().apply {
-                                                                color = android.graphics.Color.YELLOW
-                                                                textSize = 48f
-                                                                style = android.graphics.Paint.Style.FILL
-                                                                isAntiAlias = true
-                                                            }
-                                                            val bgPaint = android.graphics.Paint().apply {
-                                                                color = android.graphics.Color.argb(128, 0, 0, 0)
-                                                                style = android.graphics.Paint.Style.FILL
-                                                            }
-                                                            val triggerText = "Trigger: ${triggerEvent.reason}"
-                                                            val confText = "Confidence: ${(triggerEvent.confidence * 100).toInt()}%"
-                                                            val textWidth = maxOf(paint.measureText(triggerText), paint.measureText(confText))
-                                                            canvas.drawRect(20f, 20f, 60f + textWidth, 140f, bgPaint)
-                                                            canvas.drawText(triggerText, 40f, 70f, paint)
-                                                            canvas.drawText(confText, 40f, 120f, paint)
-                                                            
-                                                            val contentValues = android.content.ContentValues().apply {
-                                                                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "director_capture_${now}.jpg")
-                                                                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                                                                if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.P) {
-                                                                    put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/DynamicDirector")
-                                                                }
-                                                            }
-                                                            val uri = ctx.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-                                                            if (uri != null) {
-                                                                ctx.contentResolver.openOutputStream(uri)?.use { out ->
-                                                                    mutableBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
-                                                                }
-                                                                Log.d("DynamicDirector", "Zero-lag photo saved: $uri | Trigger: ${triggerEvent.reason}")
-                                                            }
-                                                        } catch (e: Exception) {
-                                                            Log.e("DynamicDirector", "Failed to save zero-lag image", e)
-                                                        } finally {
-                                                            isTakingPhoto = false
+                                        // 3. Handle Capture State Machine
+                                        if (capturingFutureFramesCount > 0) {
+                                            capturingFutureFramesCount--
+                                            if (capturingFutureFramesCount == 0) {
+                                                // Time to select the best shot from buffer
+                                                val bestShot = frameBuffer.maxByOrNull { it.smileProbability } ?: frameBuffer.last()
+                                                val bitmapToSave = bestShot.bitmap.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+                                                val triggerR = savedTriggerReason
+                                                val triggerC = savedTriggerConfidence
+                                                
+                                                Executors.newSingleThreadExecutor().execute {
+                                                    try {
+                                                        val now = System.currentTimeMillis()
+                                                        val canvas = android.graphics.Canvas(bitmapToSave)
+                                                        val paint = android.graphics.Paint().apply {
+                                                            color = android.graphics.Color.YELLOW
+                                                            textSize = 48f
+                                                            style = android.graphics.Paint.Style.FILL
+                                                            isAntiAlias = true
                                                         }
+                                                        val bgPaint = android.graphics.Paint().apply {
+                                                            color = android.graphics.Color.argb(128, 0, 0, 0)
+                                                            style = android.graphics.Paint.Style.FILL
+                                                        }
+                                                        val triggerText = "Trigger: $triggerR (Smile: ${(bestShot.smileProbability * 100).toInt()}%)"
+                                                        val confText = "Confidence: ${(triggerC * 100).toInt()}%"
+                                                        val textWidth = maxOf(paint.measureText(triggerText), paint.measureText(confText))
+                                                        canvas.drawRect(20f, 20f, 60f + textWidth, 140f, bgPaint)
+                                                        canvas.drawText(triggerText, 40f, 70f, paint)
+                                                        canvas.drawText(confText, 40f, 120f, paint)
+                                                        
+                                                        val contentValues = android.content.ContentValues().apply {
+                                                            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "director_capture_${now}.jpg")
+                                                            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                                                            if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.P) {
+                                                                put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/DynamicDirector")
+                                                            }
+                                                        }
+                                                        val uri = ctx.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+                                                        uri?.let {
+                                                            ctx.contentResolver.openOutputStream(it)?.use { out ->
+                                                                bitmapToSave.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+                                                            }
+                                                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                                                android.widget.Toast.makeText(ctx, "Best Shot Saved!", android.widget.Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        }
+                                                    } catch (e: Exception) {
+                                                        e.printStackTrace()
+                                                    } finally {
+                                                        bitmapToSave.recycle()
                                                     }
                                                 }
+                                                isTakingPhoto = false
                                             }
-                                            is TriggerEvent.Cooldown -> {
-                                                detectionStatus = "❄️ Cooldown (${triggerEvent.remainingMs / 1000}s)"
-                                                triggerStatus = ""
+                                        } else {
+                                            when (triggerEvent) {
+                                                is TriggerEvent.Fire -> {
+                                                    if (!isTakingPhoto) {
+                                                        isTakingPhoto = true
+                                                        savedTriggerReason = triggerEvent.reason
+                                                        savedTriggerConfidence = triggerEvent.confidence
+                                                        detectionStatus = "📸 ${triggerEvent.reason} (Selecting best shot...)"
+                                                        triggerStatus = "🎯 FIRED! (${(triggerEvent.confidence * 100).toInt()}%)"
+                                                        
+                                                        // Wait for future 10 frames (~0.3s) before deciding the best shot
+                                                        capturingFutureFramesCount = 10
+                                                    }
+                                                }
+                                                is TriggerEvent.Cooldown -> {
+                                                    detectionStatus = "⏳ Cooldown (${triggerEvent.remainingMs / 1000}s)"
+                                                    triggerStatus = ""
+                                                }
+                                                is TriggerEvent.Idle -> {
+                                                    detectionStatus = "👀 Observing..."
+                                                    triggerStatus = ""
+                                                }
                                             }
-                                            is TriggerEvent.Idle -> {
-                                                detectionStatus = triggerEvent.status
-                                                triggerStatus = ""
-                                            }
-                                        }
+                                        }         }
                                         
                                         imageProxy.close()
                                     }, {
@@ -306,7 +337,7 @@ fun CameraScreen(hasPermission: Boolean) {
             )
             
             // Developer Dashboard Overlay
-            val appVersion = "v0.5.0"
+            val appVersion = "v0.6.0"
             Box(
                 modifier = Modifier
                     .fillMaxSize()

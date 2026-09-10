@@ -39,7 +39,9 @@ data class PoseResult(
  * The action classifier operates on normalized time-series data for
  * body-proportion-invariant action recognition.
  */
-class PoseAnalyzer {
+import android.content.Context
+
+class PoseAnalyzer(context: Context) {
     // Stream mode for real-time pose detection
     private val options = PoseDetectorOptions.Builder()
         .setDetectorMode(PoseDetectorOptions.STREAM_MODE)
@@ -55,7 +57,7 @@ class PoseAnalyzer {
     )
 
     // Improved action classifier operating on normalized time-series
-    private val actionClassifier = ActionClassifier()
+    private val actionClassifier = ActionClassifier(context)
 
     fun analyze(
         bitmap: Bitmap,
