@@ -72,7 +72,7 @@ dependencies {
     implementation("com.google.mlkit:pose-detection:17.0.0")
 
     // ML Kit Subject Segmentation
-    implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta01")
+    implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
 
     // OpenCV
     implementation("com.quickbirdstudios:opencv:4.5.3.0")
