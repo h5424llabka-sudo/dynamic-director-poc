@@ -50,7 +50,7 @@ class SegmentationEngine {
                 // Run image processing on a background thread
                 java.util.concurrent.Executors.newSingleThreadExecutor().execute {
                     try {
-                        val resultBitmap = processBlurWithOpenCV(originalBitmap, mask.buffer, mask.width, mask.height)
+                        val resultBitmap = processBlurWithOpenCV(originalBitmap, mask, originalBitmap.width, originalBitmap.height)
                         onSuccess(resultBitmap)
                     } catch (e: Exception) {
                         onFailure(e)
