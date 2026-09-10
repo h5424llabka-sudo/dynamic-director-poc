@@ -97,7 +97,6 @@ fun CameraScreen(hasPermission: Boolean) {
         var triggerStatus by remember { mutableStateOf("") }
         var actionScoresText by remember { mutableStateOf("") }
         var imageSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
-        val context = androidx.compose.ui.platform.LocalContext.current
         
         // Initialize AI models
         val faceAnalyzer = remember { FaceAnalyzer() }
