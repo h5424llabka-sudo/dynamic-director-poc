@@ -48,6 +48,11 @@
                  │ (アクション名 & 信頼度スコア 0.0〜1.0)
                  ▼
              [TriggerController] (シャッター発火判定)
+                 ▲ (構図マッチングスコア)
+                 │
+             [ReferenceDirector] (お手本構図アシスト)
+                 ・Gemini VLM によって生成された構図ルール(モック)を保持
+                 ・Face/Pose座標からリアルタイムに一致度(0.0〜1.0)を算出
                  ・個別アショントグル検証
                  ・Activation閾値 & Deactivation閾値 (ヒステリシス)
                  ・Confirmation Window (連続Nフレーム確定)
@@ -83,6 +88,12 @@
 - **リングバッファ保持**: 常に直近20フレーム（約0.6秒分）の画像と笑顔スコアをメモリ上に一時保持します。
 - **未来フレームの収集**: トリガー発火後、即座に保存せず、さらに未来10フレーム（約0.3秒）を収集します。
 - **最高笑顔の抽出**: 過去〜未来の計20フレームの中から、最も笑顔確率（`smileProbability`）が高いフレームを選定し、最終的な写真として保存します。これにより、シャッターの僅かな遅れや瞬きなどを自動的に補正します。
+- **アーティスティックな編集 (SegmentationEngine)**: 保存される写真に対してのみ、ML Kit Subject Segmentation を用いて前景マスクを抽出し、OpenCVを用いたガウシアンブラーで背景をぼかす「被写体強調処理」を施します。
+
+### 3.4 リファレンス構図アシスト (Reference Directing)
+指定した「お手本写真」の構図に近づいた瞬間に自動撮影する機能です。
+- **ハイブリッド・エッジアーキテクチャ**: リアルタイムのカメラフレームをすべてクラウド（Gemini API等）に送るのではなく、事前にお手本写真から「構図ルール（例: 顔が画面中央、特定のポーズ）」をVLMで抽出しローカルに保持します。
+- **リアルタイムマッチング**: `ReferenceDirector` が、ローカルの `FaceAnalyzer` および `PoseAnalyzer` から得られる座標情報と構図ルールをリアルタイムに比較し、マッチングスコア（0.0〜1.0）を `TriggerController` へ継続的に送信します。これにより遅延のない構図アシスト撮影を実現します。
 
 ---
 
@@ -167,7 +178,9 @@
 | **顔・表情検出** | Google ML Kit Face Detection | 顔向き角度（Yaw, Pitch, Roll）、笑顔スコアのリアルタイム算出 |
 | **骨格時系列バッファ** | `PoseTimeSeriesBuffer` | 30フレームリングバッファ、等時間リサンプリング、肩幅スケーリング正規化 |
 | **アクション分類器** | `ActionClassifier` | 幾何学的・動的特徴量によるルールベース分類（+ 1D-CNN TFLite連携対応） |
+| **お手本構図評価** | `ReferenceDirector` | Gemini VLMの構図ルールに基づく、リアルタイムのFace/Pose座標マッチング |
 | **トリガー管理** | `TriggerController` | ヒステリシス制御、確定ウィンドウ判定、クールダウンタイマーのステートマシン |
+| **アーティスティック編集** | `SegmentationEngine` | ML Kit Subject Segmentation & OpenCV を用いたベストショットの背景ボケ処理 |
 | **MLモデル学習環境** | Python, PyTorch, ONNX, TFLite | 幼児動作の合成時系列データ生成（`generate_synthetic_data.py`）および1D-CNN学習（`train_action_model.py`） |
 | **画像メタデータ・保存** | Android MediaStore API | 撮影画像の保存、デバッグ用トリガー理由ウォーターマークの書き込み |
 
@@ -185,8 +198,10 @@ dynamic-director-ai/
 │   │   │   ├── FaceAnalyzer.kt               # 顔・笑顔検出エンジン
 │   │   │   ├── PoseAnalyzer.kt               # 骨格検出およびパイプライン統合
 │   │   │   ├── PoseTimeSeriesBuffer.kt       # 【新規】時系列リングバッファ & 空間正規化
-│   │   │   ├── ActionClassifier.kt           # 【新規】幼児向け高精度アクション認識エンジン
-│   │   │   ├── TriggerController.kt          # 【新規】ヒステリシス・確定・クールダウン制御
+│   │   │   ├── ActionClassifier.kt           # 幼児向け高精度アクション認識エンジン
+│   │   │   ├── TriggerController.kt          # ヒステリシス・確定・クールダウン制御
+│   │   │   ├── SegmentationEngine.kt         # 【新規】背景ボケ(Bokeh)効果・セグメンテーション
+│   │   │   ├── ReferenceDirector.kt          # 【新規】構図ルールマッチングエンジン
 │   │   │   └── OverlayView.kt                # 骨格ランドマーク描画
 │   │   └── assets/                           # TFLiteモデル配置用ディレクトリ
 │   └── build.gradle.kts
