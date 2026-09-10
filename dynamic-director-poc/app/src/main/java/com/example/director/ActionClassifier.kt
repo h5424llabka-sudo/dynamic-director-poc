@@ -70,9 +70,9 @@ class ActionClassifier {
             scores["Clapping"] = evaluateClapping(lastFrame, tensor)
         }
 
-        // Find the best action
+        // Find the best action (only ignore if all scores are exactly 0)
         val bestEntry = scores.maxByOrNull { it.value }
-        return if (bestEntry != null && bestEntry.value > 0.3f) {
+        return if (bestEntry != null && bestEntry.value > 0f) {
             ActionResult(bestEntry.key, bestEntry.value, scores)
         } else {
             ActionResult(null, 0f, scores)
