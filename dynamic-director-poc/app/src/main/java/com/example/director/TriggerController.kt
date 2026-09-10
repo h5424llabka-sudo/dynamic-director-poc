@@ -33,8 +33,7 @@ sealed class TriggerEvent {
  * The controller is stateful and should be called once per frame.
  */
 class TriggerController(
-    private val activationThreshold: Float = 0.70f,
-    private val deactivationThreshold: Float = 0.40f,
+    private val activationThresholds: Map<String, Float> = emptyMap(),
     private val confirmationFrames: Int = 3,
     private val cooldownMs: Long = 3000L,
     private val smileThreshold: Float = 0.80f
@@ -128,15 +127,13 @@ class TriggerController(
      * Update configuration at runtime.
      */
     fun updateConfig(
-        newActivationThreshold: Float? = null,
-        newDeactivationThreshold: Float? = null,
+        newActivationThresholds: Map<String, Float>? = null,
         newConfirmationFrames: Int? = null,
         newCooldownMs: Long? = null,
         newSmileThreshold: Float? = null
     ): TriggerController {
         return TriggerController(
-            activationThreshold = newActivationThreshold ?: activationThreshold,
-            deactivationThreshold = newDeactivationThreshold ?: deactivationThreshold,
+            activationThresholds = newActivationThresholds ?: activationThresholds,
             confirmationFrames = newConfirmationFrames ?: confirmationFrames,
             cooldownMs = newCooldownMs ?: cooldownMs,
             smileThreshold = newSmileThreshold ?: smileThreshold
@@ -158,7 +155,8 @@ class TriggerController(
 
         if (!isActive) {
             // Not yet active — need to cross the activation threshold
-            if (actionName != null && confidence >= activationThreshold) {
+            val threshold = if (actionName != null) activationThresholds[actionName] ?: 0.70f else 0.70f
+            if (actionName != null && confidence >= threshold) {
                 isActive = true
                 activeActionName = actionName
                 consecutiveActiveFrames = 1
@@ -166,6 +164,9 @@ class TriggerController(
             return false
         } else {
             // Already active — check if we should deactivate or confirm
+            val currentActivationThreshold = activationThresholds[activeActionName] ?: 0.70f
+            val deactivationThreshold = currentActivationThreshold * 0.6f
+            
             if (actionName == null || confidence < deactivationThreshold) {
                 // Dropped below deactivation threshold — reset
                 resetState()
@@ -174,7 +175,8 @@ class TriggerController(
 
             // Action changed — reset confirmation counter for the new action
             if (actionName != activeActionName) {
-                if (confidence >= activationThreshold) {
+                val newThreshold = activationThresholds[actionName] ?: 0.70f
+                if (confidence >= newThreshold) {
                     activeActionName = actionName
                     consecutiveActiveFrames = 1
                 } else {

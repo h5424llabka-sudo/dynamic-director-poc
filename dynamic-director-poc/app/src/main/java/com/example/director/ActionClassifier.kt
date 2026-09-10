@@ -202,7 +202,8 @@ class ActionClassifier {
             val wristConf = getConf(lastFrame, wristIdx)
 
             if (wristConf < 0.4f) continue
-            if ((shoulderY - wristY) < 0.3f) continue  // Not raised enough
+            // Relaxed from 0.3f to -0.1f to allow waving at chest/face level
+            if ((shoulderY - wristY) < -0.1f) continue  // Not raised enough
 
             // Collect X positions across time
             val xPositions = mutableListOf<Float>()
@@ -308,15 +309,29 @@ class ActionClassifier {
                 }
             }
 
+            // Check if the other hand is raised high (Banzai recovery)
+            val otherWristIdx = if (wristIdx == L_WRIST) R_WRIST else L_WRIST
+            val otherShoulderIdx = if (shoulderIdx == L_SHOULDER) R_SHOULDER else L_SHOULDER
+            var otherHandPenalty = 0f
+            val lastOtherY = getY(tensor.last(), otherWristIdx)
+            val lastOtherShoulderY = getY(tensor.last(), otherShoulderIdx)
+            if (getConf(tensor.last(), otherWristIdx) > 0.4f) {
+                if ((lastOtherShoulderY - lastOtherY) > 0.4f) {
+                    otherHandPenalty = 0.5f // Significant penalty if the other hand is also raised (Banzai)
+                }
+            }
+
             // Total Y displacement
             val startY = getY(tensor[0], wristIdx)
             val endY = getY(tensor.last(), wristIdx)
             val totalDisplacement = endY - startY
 
-            if (totalDisplacement > 1.0f && maxDownwardVelocity > 0.1f) {
+            // Increased maxDownwardVelocity threshold from 0.1f to 0.25f for stricter throwing detection
+            if (totalDisplacement > 1.0f && maxDownwardVelocity > 0.25f) {
                 val displacementScore = (totalDisplacement / 2.0f).coerceIn(0f, 1f)
-                val velocityScore = (maxDownwardVelocity / 0.3f).coerceIn(0f, 1f)
-                val score = (displacementScore * 0.5f + velocityScore * 0.5f)
+                val velocityScore = (maxDownwardVelocity / 0.5f).coerceIn(0f, 1f)
+                var score = (displacementScore * 0.5f + velocityScore * 0.5f)
+                score -= otherHandPenalty
                 bestScore = maxOf(bestScore, score)
             }
         }
@@ -368,8 +383,13 @@ class ActionClassifier {
         }
 
         // Temporal: look for distance oscillation (approaching and separating)
+        // Also check that BOTH hands are actually moving (absolute displacement)
         val distances = mutableListOf<Float>()
-        for (f in tensor) {
+        var lMovement = 0f
+        var rMovement = 0f
+        
+        for (i in 0 until tensor.size) {
+            val f = tensor[i]
             val lc = getConf(f, L_WRIST)
             val rc = getConf(f, R_WRIST)
             if (lc > 0.3f && rc > 0.3f) {
@@ -378,7 +398,20 @@ class ActionClassifier {
                     getX(f, R_WRIST), getY(f, R_WRIST)
                 ))
             }
+            
+            if (i > 0) {
+                val prevF = tensor[i - 1]
+                if (lc > 0.3f && getConf(prevF, L_WRIST) > 0.3f) {
+                    lMovement += distance(getX(f, L_WRIST), getY(f, L_WRIST), getX(prevF, L_WRIST), getY(prevF, L_WRIST))
+                }
+                if (rc > 0.3f && getConf(prevF, R_WRIST) > 0.3f) {
+                    rMovement += distance(getX(f, R_WRIST), getY(f, R_WRIST), getX(prevF, R_WRIST), getY(prevF, R_WRIST))
+                }
+            }
         }
+
+        // If one hand is mostly static while the other moves, it's not clapping (e.g. one-handed waving)
+        if (lMovement < 0.5f || rMovement < 0.5f) return 0f
 
         var oscillationScore = 0f
         if (distances.size >= 8) {

@@ -109,21 +109,31 @@ fun CameraScreen(hasPermission: Boolean) {
         var isSettingsOpen by remember { mutableStateOf(false) }
         val smileThresholdState = remember { mutableStateOf(80f) }
         val cooldownSecondsState = remember { mutableStateOf(3f) }
-        val activationThresholdState = remember { mutableStateOf(70f) }
         val confirmationFramesState = remember { mutableStateOf(3f) }
-        val enableBanzaiState = remember { mutableStateOf(true) }
-        val enablePointingState = remember { mutableStateOf(true) }
-        val enableWavingState = remember { mutableStateOf(true) }
-        val enableThrowingState = remember { mutableStateOf(true) }
-        val enableClappingState = remember { mutableStateOf(true) }
+        
+        // Action states (Enabled, Threshold)
+        val banzaiState = remember { mutableStateOf(true) }
+        val banzaiThreshold = remember { mutableStateOf(70f) }
+        
+        val pointingState = remember { mutableStateOf(true) }
+        val pointingThreshold = remember { mutableStateOf(70f) }
+        
+        val wavingState = remember { mutableStateOf(true) }
+        val wavingThreshold = remember { mutableStateOf(70f) }
+        
+        val throwingState = remember { mutableStateOf(true) }
+        val throwingThreshold = remember { mutableStateOf(80f) } // Stricter for throwing
+        
+        val clappingState = remember { mutableStateOf(true) }
+        val clappingThreshold = remember { mutableStateOf(20f) } // More sensitive for clapping
         
         val getEnabledActions = {
             val set = mutableSetOf<String>()
-            if (enableBanzaiState.value) set.add("Banzai")
-            if (enablePointingState.value) set.add("Pointing")
-            if (enableWavingState.value) set.add("Waving")
-            if (enableThrowingState.value) set.add("Throwing")
-            if (enableClappingState.value) set.add("Clapping")
+            if (banzaiState.value) set.add("Banzai")
+            if (pointingState.value) set.add("Pointing")
+            if (wavingState.value) set.add("Waving")
+            if (throwingState.value) set.add("Throwing")
+            if (clappingState.value) set.add("Clapping")
             set
         }
 
@@ -409,14 +419,6 @@ fun CameraScreen(hasPermission: Boolean) {
                             )
                             
                             androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(8.dp))
-                            Text("Activation Threshold: ${activationThresholdState.value.toInt()}%")
-                            androidx.compose.material3.Slider(
-                                value = activationThresholdState.value,
-                                onValueChange = { activationThresholdState.value = it },
-                                valueRange = 30f..100f
-                            )
-                            
-                            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(8.dp))
                             Text("Confirmation Frames: ${confirmationFramesState.value.toInt()}")
                             androidx.compose.material3.Slider(
                                 value = confirmationFramesState.value,
@@ -428,8 +430,15 @@ fun CameraScreen(hasPermission: Boolean) {
                             // Apply button for trigger settings
                             androidx.compose.material3.TextButton(
                                 onClick = {
+                                    val newThresholds = mapOf(
+                                        "Banzai" to banzaiThreshold.value / 100f,
+                                        "Pointing" to pointingThreshold.value / 100f,
+                                        "Waving" to wavingThreshold.value / 100f,
+                                        "Throwing" to throwingThreshold.value / 100f,
+                                        "Clapping" to clappingThreshold.value / 100f
+                                    )
                                     triggerController.value = triggerController.value.updateConfig(
-                                        newActivationThreshold = activationThresholdState.value / 100f,
+                                        newActivationThresholds = newThresholds,
                                         newCooldownMs = (cooldownSecondsState.value * 1000).toLong(),
                                         newConfirmationFrames = confirmationFramesState.value.toInt(),
                                         newSmileThreshold = smileThresholdState.value / 100f
@@ -441,24 +450,40 @@ fun CameraScreen(hasPermission: Boolean) {
                             
                             androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(16.dp))
                             
-                            // --- Action Toggles ---
-                            Text("Enabled Actions:", style = MaterialTheme.typography.titleSmall)
-                            val actionToggles = listOf(
-                                "Banzai" to enableBanzaiState,
-                                "Pointing" to enablePointingState,
-                                "Waving" to enableWavingState,
-                                "Throwing" to enableThrowingState,
-                                "Clapping" to enableClappingState
+                            // --- Action Toggles & Thresholds ---
+                            Text("Action Settings:", style = MaterialTheme.typography.titleSmall)
+                            data class ActionSetting(
+                                val name: String, 
+                                val enabled: androidx.compose.runtime.MutableState<Boolean>, 
+                                val threshold: androidx.compose.runtime.MutableState<Float>
                             )
-                            actionToggles.forEach { (name, state) ->
+                            val actionSettings = listOf(
+                                ActionSetting("Banzai", banzaiState, banzaiThreshold),
+                                ActionSetting("Pointing", pointingState, pointingThreshold),
+                                ActionSetting("Waving", wavingState, wavingThreshold),
+                                ActionSetting("Throwing", throwingState, throwingThreshold),
+                                ActionSetting("Clapping", clappingState, clappingThreshold)
+                            )
+                            
+                            actionSettings.forEach { setting ->
                                 androidx.compose.foundation.layout.Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text(name, modifier = Modifier.weight(1f))
+                                    Text(
+                                        "${setting.name} (${setting.threshold.value.toInt()}%)", 
+                                        modifier = Modifier.weight(1f)
+                                    )
                                     androidx.compose.material3.Switch(
-                                        checked = state.value,
-                                        onCheckedChange = { state.value = it }
+                                        checked = setting.enabled.value,
+                                        onCheckedChange = { setting.enabled.value = it }
+                                    )
+                                }
+                                if (setting.enabled.value) {
+                                    androidx.compose.material3.Slider(
+                                        value = setting.threshold.value,
+                                        onValueChange = { setting.threshold.value = it },
+                                        valueRange = 0f..100f
                                     )
                                 }
                             }
