@@ -34,6 +34,7 @@ class SegmentationEngine {
      */
     fun applyBokehEffect(
         originalBitmap: Bitmap,
+        bokehStrength: Float,
         onSuccess: (Bitmap) -> Unit,
         onFailure: (Exception) -> Unit
     ) {
@@ -50,7 +51,7 @@ class SegmentationEngine {
                 // Run image processing on a background thread
                 java.util.concurrent.Executors.newSingleThreadExecutor().execute {
                     try {
-                        val resultBitmap = processBlurWithOpenCV(originalBitmap, mask, originalBitmap.width, originalBitmap.height)
+                        val resultBitmap = processBlurWithOpenCV(originalBitmap, mask, originalBitmap.width, originalBitmap.height, bokehStrength)
                         onSuccess(resultBitmap)
                     } catch (e: Exception) {
                         onFailure(e)
@@ -66,7 +67,8 @@ class SegmentationEngine {
         original: Bitmap,
         maskBuffer: FloatBuffer,
         maskWidth: Int,
-        maskHeight: Int
+        maskHeight: Int,
+        bokehStrength: Float
     ): Bitmap {
         // 1. Convert original Bitmap to OpenCV Mat (RGBA)
         val origMat = Mat()
@@ -78,7 +80,10 @@ class SegmentationEngine {
         
         // 2. Create Blurred Background
         val blurredMat = Mat()
-        Imgproc.GaussianBlur(rgbMat, blurredMat, Size(55.0, 55.0), 0.0) // heavy blur
+        var kSize = bokehStrength.toInt()
+        if (kSize % 2 == 0) kSize += 1
+        Imgproc.GaussianBlur(rgbMat, blurredMat, Size(kSize.toDouble(), kSize.toDouble()), 0.0)
+
         
         // 3. Construct Mask Mat from FloatBuffer
         maskBuffer.rewind()
@@ -102,7 +107,8 @@ class SegmentationEngine {
         Core.merge(maskChannels, mask3c)
         
         val invertedMask3c = Mat()
-        Core.subtract(Mat.ones(mask3c.size(), mask3c.type()), mask3c, invertedMask3c)
+        val allOnes = Mat(mask3c.size(), mask3c.type(), org.opencv.core.Scalar.all(1.0))
+        Core.subtract(allOnes, mask3c, invertedMask3c)
         
         val origFloat = Mat()
         rgbMat.convertTo(origFloat, CvType.CV_32FC3)
@@ -138,6 +144,7 @@ class SegmentationEngine {
         resizedMask.release()
         mask3c.release()
         invertedMask3c.release()
+        allOnes.release()
         origFloat.release()
         blurFloat.release()
         fg.release()

@@ -118,7 +118,13 @@ fun CameraScreen(hasPermission: Boolean) {
         val cooldownSecondsState = remember { mutableStateOf(3f) }
         val confirmationFramesState = remember { mutableStateOf(3f) }
         
-        // Action states (Enabled, Threshold)
+        // --- Advanced Settings States ---
+        val bestShotEnabledState = remember { mutableStateOf(true) }
+        val bestShotFramesState = remember { mutableStateOf(10f) }
+        val bokehEnabledState = remember { mutableStateOf(true) }
+        val bokehStrengthState = remember { mutableStateOf(55f) }
+        val metadataEnabledState = remember { mutableStateOf(true) }
+        
         val banzaiState = remember { mutableStateOf(true) }
         val banzaiThreshold = remember { mutableStateOf(70f) }
         
@@ -244,28 +250,31 @@ fun CameraScreen(hasPermission: Boolean) {
                                                 val triggerR = savedTriggerReason
                                                 val triggerC = savedTriggerConfidence
                                                 
-                                                segmentationEngine.applyBokehEffect(bitmapToSave, { blurredBitmap ->
+                                                val saveImageAction = { finalBitmap: android.graphics.Bitmap ->
                                                     Executors.newSingleThreadExecutor().execute {
                                                         try {
                                                             val now = System.currentTimeMillis()
-                                                            val resultToSave = blurredBitmap.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
-                                                            val canvas = android.graphics.Canvas(resultToSave)
-                                                            val paint = android.graphics.Paint().apply {
-                                                                color = android.graphics.Color.YELLOW
-                                                                textSize = 48f
-                                                                style = android.graphics.Paint.Style.FILL
-                                                                isAntiAlias = true
+                                                            val resultToSave = finalBitmap.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+                                                            
+                                                            if (metadataEnabledState.value) {
+                                                                val canvas = android.graphics.Canvas(resultToSave)
+                                                                val paint = android.graphics.Paint().apply {
+                                                                    color = android.graphics.Color.YELLOW
+                                                                    textSize = 48f
+                                                                    style = android.graphics.Paint.Style.FILL
+                                                                    isAntiAlias = true
+                                                                }
+                                                                val bgPaint = android.graphics.Paint().apply {
+                                                                    color = android.graphics.Color.argb(128, 0, 0, 0)
+                                                                    style = android.graphics.Paint.Style.FILL
+                                                                }
+                                                                val triggerText = "Trigger: $triggerR (Smile: ${(bestShot.smileProbability * 100).toInt()}%)"
+                                                                val confText = "Confidence: ${(triggerC * 100).toInt()}%"
+                                                                val textWidth = maxOf(paint.measureText(triggerText), paint.measureText(confText))
+                                                                canvas.drawRect(20f, 20f, 60f + textWidth, 140f, bgPaint)
+                                                                canvas.drawText(triggerText, 40f, 70f, paint)
+                                                                canvas.drawText(confText, 40f, 120f, paint)
                                                             }
-                                                            val bgPaint = android.graphics.Paint().apply {
-                                                                color = android.graphics.Color.argb(128, 0, 0, 0)
-                                                                style = android.graphics.Paint.Style.FILL
-                                                            }
-                                                            val triggerText = "Trigger: $triggerR (Smile: ${(bestShot.smileProbability * 100).toInt()}%)"
-                                                            val confText = "Confidence: ${(triggerC * 100).toInt()}%"
-                                                            val textWidth = maxOf(paint.measureText(triggerText), paint.measureText(confText))
-                                                            canvas.drawRect(20f, 20f, 60f + textWidth, 140f, bgPaint)
-                                                            canvas.drawText(triggerText, 40f, 70f, paint)
-                                                            canvas.drawText(confText, 40f, 120f, paint)
                                                             
                                                             val contentValues = android.content.ContentValues().apply {
                                                                 put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "director_capture_${now}.jpg")
@@ -280,7 +289,8 @@ fun CameraScreen(hasPermission: Boolean) {
                                                                     resultToSave.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
                                                                 }
                                                                 android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                                                    android.widget.Toast.makeText(ctx, "Best Shot (Bokeh) Saved!", android.widget.Toast.LENGTH_SHORT).show()
+                                                                    val msg = if (bokehEnabledState.value) "Best Shot (Bokeh) Saved!" else "Photo Saved!"
+                                                                    android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_SHORT).show()
                                                                 }
                                                             }
                                                             resultToSave.recycle()
@@ -290,10 +300,19 @@ fun CameraScreen(hasPermission: Boolean) {
                                                             bitmapToSave.recycle() // Recycle original
                                                         }
                                                     }
-                                                }, { e ->
-                                                    android.util.Log.e("DynamicDirector", "Bokeh failed", e)
-                                                    bitmapToSave.recycle()
-                                                })
+                                                }
+
+                                                if (bokehEnabledState.value) {
+                                                    segmentationEngine.applyBokehEffect(bitmapToSave, bokehStrengthState.value, { blurredBitmap ->
+                                                        saveImageAction(blurredBitmap)
+                                                    }, { e ->
+                                                        android.util.Log.e("DynamicDirector", "Bokeh failed", e)
+                                                        saveImageAction(bitmapToSave)
+                                                    })
+                                                } else {
+                                                    saveImageAction(bitmapToSave)
+                                                }
+                                                
                                                 isTakingPhoto = false
                                             }
                                         } else {
@@ -306,8 +325,12 @@ fun CameraScreen(hasPermission: Boolean) {
                                                         detectionStatus = "📸 ${triggerEvent.reason} (Selecting best shot...)"
                                                         triggerStatus = "🎯 FIRED! (${(triggerEvent.confidence * 100).toInt()}%)"
                                                         
-                                                        // Wait for future 10 frames (~0.3s) before deciding the best shot
-                                                        capturingFutureFramesCount = 10
+                                                        // Check if Best Shot feature is enabled
+                                                        if (bestShotEnabledState.value) {
+                                                            capturingFutureFramesCount = bestShotFramesState.value.toInt()
+                                                        } else {
+                                                            capturingFutureFramesCount = 1
+                                                        }
                                                     }
                                                 }
                                                 is TriggerEvent.Cooldown -> {
@@ -356,7 +379,7 @@ fun CameraScreen(hasPermission: Boolean) {
             )
             
             // Developer Dashboard Overlay
-            val appVersion = "v0.7.0"
+            val appVersion = "v0.7.1"
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -512,6 +535,53 @@ fun CameraScreen(hasPermission: Boolean) {
                                 }
                             ) {
                                 Text("Apply Trigger Settings")
+                            }
+                            
+                            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(16.dp))
+                            
+                            
+                            // --- Advanced Features ---
+                            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(16.dp))
+                            Text("Advanced Features", style = MaterialTheme.typography.titleSmall)
+                            
+                            androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                Text("Best Shot Auto-Select", modifier = Modifier.weight(1f))
+                                androidx.compose.material3.Switch(
+                                    checked = bestShotEnabledState.value,
+                                    onCheckedChange = { bestShotEnabledState.value = it }
+                                )
+                            }
+                            if (bestShotEnabledState.value) {
+                                Text("Future Frames (Wait): ${bestShotFramesState.value.toInt()}")
+                                androidx.compose.material3.Slider(
+                                    value = bestShotFramesState.value,
+                                    onValueChange = { bestShotFramesState.value = it },
+                                    valueRange = 1f..30f
+                                )
+                            }
+                            
+                            androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                Text("Bokeh Effect", modifier = Modifier.weight(1f))
+                                androidx.compose.material3.Switch(
+                                    checked = bokehEnabledState.value,
+                                    onCheckedChange = { bokehEnabledState.value = it }
+                                )
+                            }
+                            if (bokehEnabledState.value) {
+                                Text("Bokeh Strength: ${bokehStrengthState.value.toInt()}")
+                                androidx.compose.material3.Slider(
+                                    value = bokehStrengthState.value,
+                                    onValueChange = { bokehStrengthState.value = it },
+                                    valueRange = 5f..95f
+                                )
+                            }
+                            
+                            androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                Text("Draw Metadata on Photo", modifier = Modifier.weight(1f))
+                                androidx.compose.material3.Switch(
+                                    checked = metadataEnabledState.value,
+                                    onCheckedChange = { metadataEnabledState.value = it }
+                                )
                             }
                             
                             androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(16.dp))

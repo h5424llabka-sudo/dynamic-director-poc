@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.director"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "0.7.1"
     }
 
     buildTypes {
